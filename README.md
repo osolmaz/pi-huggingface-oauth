@@ -6,13 +6,13 @@ The package uses Hugging Face's device authorization flow, which works in local 
 
 ## Status
 
-The extension is implemented but not released to npm. A maintainer still needs to register the project's public Hugging Face OAuth application and complete the first real browser-flow test.
+The extension is implemented but not released to npm. The project's public Hugging Face OAuth application is registered; the first real browser-flow and inference test remains a manual release gate.
 
-## OAuth application setup
+## OAuth application
 
-Create a [Hugging Face OAuth application](https://huggingface.co/settings/applications/new) for this package. It must be a public app with no client secret and only the `inference-api` scope.
+The package includes its dedicated public Hugging Face OAuth client ID, so browser login needs no extra configuration. The application has no client secret and requests only the `inference-api` scope.
 
-Set its public client ID before starting Pi:
+Developers can test another compatible public application by setting an override before starting Pi:
 
 ```bash
 export PI_HUGGINGFACE_OAUTH_CLIENT_ID=<client-id>

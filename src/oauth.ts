@@ -1,6 +1,6 @@
 import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import type { ProviderConfig } from "@earendil-works/pi-coding-agent";
-import { CLIENT_ID_ENV, REFRESH_SKEW_MS } from "./constants.js";
+import { CLIENT_ID_ENV, DEFAULT_CLIENT_ID, REFRESH_SKEW_MS } from "./constants.js";
 import { HuggingFaceOAuthError } from "./errors.js";
 import { pollDeviceToken, refreshAccessToken, requestDeviceAuthorization } from "./protocol.js";
 import type { ProtocolDependencies } from "./types.js";
@@ -16,12 +16,9 @@ type OAuthConfig = NonNullable<ProviderConfig["oauth"]>;
 
 export function resolveClientId(options: OAuthAdapterOptions = {}): string {
   const environmentClientId = options.env === undefined ? process.env[CLIENT_ID_ENV] : options.env[CLIENT_ID_ENV];
-  const configured = options.clientId ?? environmentClientId;
-  if (configured === undefined || configured.trim().length === 0) {
-    throw new HuggingFaceOAuthError(
-      "configuration",
-      `Hugging Face browser login needs a dedicated public OAuth client ID. Set ${CLIENT_ID_ENV} before starting Pi.`,
-    );
+  const configured = options.clientId ?? environmentClientId ?? DEFAULT_CLIENT_ID;
+  if (configured.trim().length === 0) {
+    throw new HuggingFaceOAuthError("configuration", `The ${CLIENT_ID_ENV} override must not be empty.`);
   }
   return configured.trim();
 }
