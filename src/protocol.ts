@@ -58,6 +58,11 @@ function form(fields: Readonly<Record<string, string>>): URLSearchParams {
   return value;
 }
 
+function safeOAuthErrorCode(value: string, secrets: readonly string[]): string {
+  const redacted = redactForError(value, secrets);
+  return redacted.length > 0 ? redacted : "unknown_oauth_error";
+}
+
 async function parseErrorResponse(
   response: Response,
   deps: ProtocolDependencies,
@@ -79,11 +84,10 @@ async function parseErrorResponse(
   const oauth = parseOAuthError(parsed);
   if (oauth === undefined)
     return new HuggingFaceOAuthError(stage, `Hugging Face ${stage} failed with HTTP ${String(response.status)}.`);
+  const code = safeOAuthErrorCode(oauth.code, secrets);
   const description = redactForError(oauth.description, secrets);
   const suffix = description.length > 0 ? `: ${description}` : "";
-  return new HuggingFaceOAuthError(stage, `Hugging Face ${stage} failed (${redactForError(oauth.code)})${suffix}.`, {
-    code: oauth.code,
-  });
+  return new HuggingFaceOAuthError(stage, `Hugging Face ${stage} failed (${code})${suffix}.`, { code });
 }
 
 export async function requestDeviceAuthorization(
@@ -143,13 +147,11 @@ function oauthPollOutcome(oauth: { code: string; description: string }, device: 
   if (oauth.code === "slow_down") return { nextIntervalAdjustment: 5 };
   const terminal = terminalPollError(oauth.code);
   if (terminal !== undefined) throw terminal;
-  const description = redactForError(oauth.description, [device.deviceCode]);
+  const secrets = [device.deviceCode];
+  const code = safeOAuthErrorCode(oauth.code, secrets);
+  const description = redactForError(oauth.description, secrets);
   const suffix = description.length > 0 ? `: ${description}` : "";
-  throw new HuggingFaceOAuthError(
-    "token polling",
-    `Hugging Face token polling failed (${redactForError(oauth.code)})${suffix}.`,
-    { code: oauth.code },
-  );
+  throw new HuggingFaceOAuthError("token polling", `Hugging Face token polling failed (${code})${suffix}.`, { code });
 }
 
 function discardResponse(response: Response): void {

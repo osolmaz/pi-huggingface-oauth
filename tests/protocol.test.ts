@@ -230,7 +230,7 @@ describe("Hugging Face OAuth protocol", () => {
   it("redacts secrets from unexpected polling errors", async () => {
     server.enqueue({
       status: 400,
-      body: { error: "invalid_request", error_description: `device_code=${DEVICE_CODE} Bearer ${ACCESS_TOKEN}` },
+      body: { error: DEVICE_CODE, error_description: `device_code=${DEVICE_CODE} Bearer ${ACCESS_TOKEN}` },
     });
     const clock = fakeClock();
     let caught: unknown;
@@ -239,7 +239,7 @@ describe("Hugging Face OAuth protocol", () => {
     } catch (error) {
       caught = error;
     }
-    expect(caught).toBeInstanceOf(HuggingFaceOAuthError);
+    expect(caught).toMatchObject({ code: "[redacted]" });
     expect(String(caught)).not.toContain(DEVICE_CODE);
     expect(String(caught)).not.toContain(ACCESS_TOKEN);
     expect(String(caught)).toContain("[redacted]");
@@ -304,6 +304,18 @@ describe("Hugging Face OAuth protocol", () => {
     await refreshAccessToken(CLIENT_ID, REFRESH_TOKEN, {}, { endpoints: server.endpoints(), ...clock.dependencies });
     expect(clock.waits).toEqual([250, 500]);
     expect(server.requests).toHaveLength(3);
+  });
+
+  it("redacts a refresh token echoed as an OAuth error code", async () => {
+    server.enqueue({ status: 400, body: { error: REFRESH_TOKEN } });
+    let caught: unknown;
+    try {
+      await refreshAccessToken(CLIENT_ID, REFRESH_TOKEN, {}, { endpoints: server.endpoints() });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({ code: "[redacted]" });
+    expect(String(caught)).not.toContain(REFRESH_TOKEN);
   });
 
   it("reports invalid_grant without exposing the refresh token", async () => {
