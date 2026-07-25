@@ -138,6 +138,24 @@ describe("Hugging Face OAuth protocol", () => {
     ).rejects.toThrow("response timed out");
   });
 
+  it("counts response-header time against the HTTP deadline", async () => {
+    let now = 0;
+    await expect(
+      requestDeviceAuthorization(
+        CLIENT_ID,
+        {},
+        {
+          fetch: async () => {
+            now = 100;
+            return new Response(JSON.stringify(deviceResponse()));
+          },
+          httpTimeoutMs: 100,
+          monotonicNow: () => now,
+        },
+      ),
+    ).rejects.toThrow("device authorization timed out");
+  });
+
   it("cancels while reading a response body", async () => {
     server.enqueue({ bodyDelayMs: 500, body: deviceResponse() });
     const controller = new AbortController();
@@ -308,6 +326,29 @@ describe("Hugging Face OAuth protocol", () => {
     await refreshAccessToken(CLIENT_ID, REFRESH_TOKEN, {}, { endpoints: server.endpoints(), ...clock.dependencies });
     expect(clock.waits).toEqual([250, 500]);
     expect(server.requests).toHaveLength(3);
+  });
+
+  it("counts response-header time against each refresh deadline", async () => {
+    let now = 0;
+    let requests = 0;
+    await expect(
+      refreshAccessToken(
+        CLIENT_ID,
+        REFRESH_TOKEN,
+        {},
+        {
+          fetch: async () => {
+            requests += 1;
+            now += 100;
+            return new Response(JSON.stringify(tokenResponse()));
+          },
+          httpTimeoutMs: 100,
+          monotonicNow: () => now,
+          sleep: async () => undefined,
+        },
+      ),
+    ).rejects.toThrow("token refresh timed out");
+    expect(requests).toBe(3);
   });
 
   it("redacts a refresh token echoed as an OAuth error code", async () => {

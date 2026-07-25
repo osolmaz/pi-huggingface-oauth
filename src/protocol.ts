@@ -63,19 +63,43 @@ function safeOAuthErrorCode(value: string, secrets: readonly string[]): string {
   return redacted.length > 0 ? redacted : "unknown_oauth_error";
 }
 
+type NetworkStage = "device authorization" | "token polling" | "token refresh";
+
+function discardResponse(response: Response): void {
+  void response.body?.cancel().catch(() => undefined);
+}
+
+function requestDeadline(deps: ProtocolDependencies, maximum = Number.POSITIVE_INFINITY): number {
+  return Math.min(maximum, deps.monotonicNow() + deps.httpTimeoutMs);
+}
+
+function timeUntil(deps: ProtocolDependencies, deadline: number): number {
+  return Math.max(1, deadline - deps.monotonicNow());
+}
+
+function responseBodyTimeout(
+  response: Response,
+  deps: ProtocolDependencies,
+  deadline: number,
+  stage: NetworkStage,
+): number {
+  const remaining = deadline - deps.monotonicNow();
+  if (remaining > 0) return remaining;
+  discardResponse(response);
+  throw new HuggingFaceOAuthError(stage, `Hugging Face ${stage} timed out.`, { retryable: true });
+}
+
 async function parseErrorResponse(
   response: Response,
   deps: ProtocolDependencies,
-  stage: "device authorization" | "token polling" | "token refresh",
+  stage: NetworkStage,
   secrets: readonly string[],
+  timeoutMs: number,
   signal: AbortSignal | undefined,
 ): Promise<HuggingFaceOAuthError> {
   let parsed: unknown;
   try {
-    parsed = await readBoundedJson(response, deps.maxResponseBytes, stage, {
-      timeoutMs: deps.httpTimeoutMs,
-      signal,
-    });
+    parsed = await readBoundedJson(response, deps.maxResponseBytes, stage, { timeoutMs, signal });
   } catch (error) {
     if (error instanceof HuggingFaceOAuthCancelledError) throw error;
     if (error instanceof HuggingFaceOAuthError && error.retryable) throw error;
@@ -97,17 +121,20 @@ export async function requestDeviceAuthorization(
 ): Promise<DeviceAuthorization> {
   assertClientId(clientId);
   const deps = dependencies(override);
+  const deadline = requestDeadline(deps);
   const response = await postForm({
     url: deps.endpoints.deviceAuthorization,
     form: form({ client_id: clientId, scope: OAUTH_SCOPE }),
     fetch: deps.fetch,
-    timeoutMs: deps.httpTimeoutMs,
+    timeoutMs: timeUntil(deps, deadline),
     signal: options.signal,
     stage: "device authorization",
   });
-  if (!response.ok) throw await parseErrorResponse(response, deps, "device authorization", [], options.signal);
+  const bodyTimeoutMs = responseBodyTimeout(response, deps, deadline, "device authorization");
+  if (!response.ok)
+    throw await parseErrorResponse(response, deps, "device authorization", [], bodyTimeoutMs, options.signal);
   const value = await readBoundedJson(response, deps.maxResponseBytes, "device authorization", {
-    timeoutMs: deps.httpTimeoutMs,
+    timeoutMs: bodyTimeoutMs,
     signal: options.signal,
   });
   return parseDeviceAuthorization(value);
@@ -154,10 +181,6 @@ function oauthPollOutcome(oauth: { code: string; description: string }, device: 
   throw new HuggingFaceOAuthError("token polling", `Hugging Face token polling failed (${code})${suffix}.`, { code });
 }
 
-function discardResponse(response: Response): void {
-  void response.body?.cancel().catch(() => undefined);
-}
-
 async function handlePollResponse(
   response: Response,
   device: DeviceAuthorization,
@@ -189,22 +212,17 @@ async function pollOnce(
   deps: ProtocolDependencies,
   deadline: number,
 ): Promise<PollOutcome> {
-  const remainingMs = Math.max(1, deadline - deps.monotonicNow());
-  const requestTimeoutMs = Math.min(deps.httpTimeoutMs, remainingMs);
+  const deadlineForRequest = requestDeadline(deps, deadline);
   try {
-    const response = await tokenPollResponse(clientId, device, options.signal, deps, requestTimeoutMs);
-    const bodyRemainingMs = deadline - deps.monotonicNow();
-    if (bodyRemainingMs <= 0) {
-      discardResponse(response);
-      return {};
-    }
-    return await handlePollResponse(
-      response,
+    const response = await tokenPollResponse(
+      clientId,
       device,
-      deps,
       options.signal,
-      Math.min(deps.httpTimeoutMs, bodyRemainingMs),
+      deps,
+      timeUntil(deps, deadlineForRequest),
     );
+    const bodyTimeoutMs = responseBodyTimeout(response, deps, deadlineForRequest, "token polling");
+    return await handlePollResponse(response, device, deps, options.signal, bodyTimeoutMs);
   } catch (error) {
     if (error instanceof HuggingFaceOAuthCancelledError) throw error;
     if (error instanceof HuggingFaceOAuthError && error.retryable) return {};
@@ -269,14 +287,16 @@ async function refreshAttempt(
   signal: AbortSignal | undefined,
   deps: ProtocolDependencies,
 ): Promise<RefreshGrant> {
+  const deadline = requestDeadline(deps);
   const response = await postForm({
     url: deps.endpoints.token,
     form: form({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: clientId }),
     fetch: deps.fetch,
-    timeoutMs: deps.httpTimeoutMs,
+    timeoutMs: timeUntil(deps, deadline),
     signal,
     stage: "token refresh",
   });
+  const bodyTimeoutMs = responseBodyTimeout(response, deps, deadline, "token refresh");
   if (response.status === 429 || response.status >= 500) {
     discardResponse(response);
     throw new HuggingFaceOAuthError("token refresh", "Hugging Face token refresh is temporarily unavailable.", {
@@ -284,7 +304,7 @@ async function refreshAttempt(
     });
   }
   if (!response.ok) {
-    const error = await parseErrorResponse(response, deps, "token refresh", [refreshToken], signal);
+    const error = await parseErrorResponse(response, deps, "token refresh", [refreshToken], bodyTimeoutMs, signal);
     if (error.code === "invalid_grant") {
       throw new HuggingFaceOAuthError(
         "token refresh",
@@ -297,7 +317,7 @@ async function refreshAttempt(
     throw error;
   }
   const value = await readBoundedJson(response, deps.maxResponseBytes, "token refresh", {
-    timeoutMs: deps.httpTimeoutMs,
+    timeoutMs: bodyTimeoutMs,
     signal,
   });
   return parseRefreshGrant(value);
