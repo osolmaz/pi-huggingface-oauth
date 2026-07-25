@@ -188,14 +188,20 @@ async function pollOnce(
   deadline: number,
 ): Promise<PollOutcome> {
   const remainingMs = Math.max(1, deadline - deps.monotonicNow());
-  const timeoutMs = Math.min(deps.httpTimeoutMs, remainingMs);
+  const requestTimeoutMs = Math.min(deps.httpTimeoutMs, remainingMs);
   try {
+    const response = await tokenPollResponse(clientId, device, options.signal, deps, requestTimeoutMs);
+    const bodyRemainingMs = deadline - deps.monotonicNow();
+    if (bodyRemainingMs <= 0) {
+      discardResponse(response);
+      return {};
+    }
     return await handlePollResponse(
-      await tokenPollResponse(clientId, device, options.signal, deps, timeoutMs),
+      response,
       device,
       deps,
       options.signal,
-      timeoutMs,
+      Math.min(deps.httpTimeoutMs, bodyRemainingMs),
     );
   } catch (error) {
     if (error instanceof HuggingFaceOAuthCancelledError) throw error;
@@ -227,6 +233,10 @@ function adjustedInterval(current: number, outcome: PollOutcome): number {
   return Math.min(MAX_POLL_INTERVAL_SECONDS, current + (outcome.nextIntervalAdjustment ?? 0));
 }
 
+function boundedPollWait(intervalSeconds: number, now: number, deadline: number): number {
+  return Math.min(intervalSeconds * 1000, Math.max(0, deadline - now));
+}
+
 export async function pollDeviceToken(
   clientId: string,
   device: DeviceAuthorization,
@@ -238,7 +248,7 @@ export async function pollDeviceToken(
   const deadline = deps.monotonicNow() + device.expiresInSeconds * 1000;
   let intervalSeconds = device.intervalSeconds;
   while (deps.monotonicNow() < deadline) {
-    await wait(deps, intervalSeconds * 1000, options.signal, "token polling");
+    await wait(deps, boundedPollWait(intervalSeconds, deps.monotonicNow(), deadline), options.signal, "token polling");
     if (deps.monotonicNow() >= deadline) break;
     reportProgress(options.onProgress);
     const outcome = await pollOnce(clientId, device, options, deps, deadline);

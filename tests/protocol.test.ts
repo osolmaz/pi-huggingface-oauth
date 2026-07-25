@@ -201,6 +201,21 @@ describe("Hugging Face OAuth protocol", () => {
     expect(clock.waits).toEqual([1000, 1000, 1000]);
   });
 
+  it("caps the final polling wait at the device deadline", async () => {
+    server.enqueue({ status: 500 }, { status: 500 }, { status: 500 });
+    const clock = fakeClock();
+    await expect(
+      pollDeviceToken(
+        CLIENT_ID,
+        device({ expiresInSeconds: 5, intervalSeconds: 2 }),
+        {},
+        { endpoints: server.endpoints(), ...clock.dependencies },
+      ),
+    ).rejects.toMatchObject({ code: "expired_token" });
+    expect(clock.waits).toEqual([2000, 2000, 1000]);
+    expect(server.requests).toHaveLength(2);
+  });
+
   it.each([
     ["access_denied", "authorization was denied"],
     ["expired_token", "device code expired"],
