@@ -2,6 +2,7 @@ import type { OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import registerHuggingFaceOAuth, { createHuggingFaceProviderOverride } from "../index.js";
 import type { ProviderRegistrar } from "../index.js";
+import { DEFAULT_CLIENT_ID } from "../src/constants.js";
 import { HuggingFaceOAuthError } from "../src/errors.js";
 import { createHuggingFaceOAuth, credentialExpiry, resolveClientId } from "../src/oauth.js";
 import type { ProtocolDependencies } from "../src/types.js";
@@ -78,17 +79,22 @@ describe("Pi OAuth adapter", () => {
     expect(override.streamSimple).toBeUndefined();
   });
 
-  it("requires a dedicated public client ID before network access", async () => {
-    const oauth = createHuggingFaceOAuth({ env: {} });
-    const state: CallbackState = { devices: [], progress: [] };
-    await expect(oauth.login(callbacks(state))).rejects.toThrow("PI_HUGGINGFACE_OAUTH_CLIENT_ID");
-    expect(server.requests).toHaveLength(0);
+  it("uses the bundled public client ID by default", () => {
+    expect(resolveClientId({ env: {} })).toBe(DEFAULT_CLIENT_ID);
   });
 
-  it("resolves the explicit client ID before the environment", () => {
+  it("resolves an explicit client ID before the environment and bundled default", () => {
     expect(resolveClientId({ clientId: " explicit ", env: { PI_HUGGINGFACE_OAUTH_CLIENT_ID: "environment" } })).toBe(
       "explicit",
     );
+    expect(resolveClientId({ env: { PI_HUGGINGFACE_OAUTH_CLIENT_ID: " environment " } })).toBe("environment");
+  });
+
+  it("rejects an empty client ID override before network access", async () => {
+    const oauth = createHuggingFaceOAuth({ env: { PI_HUGGINGFACE_OAUTH_CLIENT_ID: " " } });
+    const state: CallbackState = { devices: [], progress: [] };
+    await expect(oauth.login(callbacks(state))).rejects.toThrow("must not be empty");
+    expect(server.requests).toHaveLength(0);
   });
 
   it("completes device login through Pi callbacks", async () => {

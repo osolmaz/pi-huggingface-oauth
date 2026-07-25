@@ -45,7 +45,8 @@ The application must meet these requirements:
 - It has no client secret.
 - Its allowed scope is `inference-api`.
 - It supports the OAuth 2.0 Device Authorization Grant.
-- Its public client ID is supplied through `PI_HUGGINGFACE_OAUTH_CLIENT_ID` until the project registers and verifies its release application.
+- Its public client ID is bundled with the package.
+- `PI_HUGGINGFACE_OAUTH_CLIENT_ID` can override the bundled client ID for development and testing.
 
 The client ID is public configuration. The package must not reuse the Hugging Face CLI client ID or require a client secret in settings, environment variables, or source control.
 
