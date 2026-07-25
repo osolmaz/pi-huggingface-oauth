@@ -25,6 +25,15 @@ describe("OAuth response validation", () => {
     expect(() => parseRefreshGrant("token")).toThrow("invalid JSON data");
   });
 
+  it("accepts Hugging Face's short device verification URL", () => {
+    expect(
+      parseDeviceAuthorization({ ...validDevice(), verification_uri: "https://hf.co/oauth/device" }),
+    ).toMatchObject({
+      verificationUri: "https://hf.co/oauth/device",
+      verificationUriComplete: "https://hf.co/oauth/device",
+    });
+  });
+
   it("rejects invalid optional device fields", () => {
     expect(() => parseDeviceAuthorization({ ...validDevice(), verification_uri_complete: 3 })).toThrow(
       "invalid verification_uri_complete",

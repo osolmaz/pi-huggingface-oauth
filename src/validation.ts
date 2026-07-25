@@ -1,6 +1,6 @@
 import {
   DEFAULT_POLL_INTERVAL_SECONDS,
-  HUGGING_FACE_ORIGIN,
+  HUGGING_FACE_VERIFICATION_ORIGINS,
   MAX_DEVICE_LIFETIME_SECONDS,
   MAX_POLL_INTERVAL_SECONDS,
   MAX_TOKEN_LIFETIME_SECONDS,
@@ -84,7 +84,8 @@ function huggingFaceUrl(value: string, field: string): string {
       `Hugging Face device authorization returned an invalid ${field} field.`,
     );
   }
-  if (url.origin !== HUGGING_FACE_ORIGIN || url.protocol !== "https:" || url.username || url.password) {
+  const allowedOrigin = HUGGING_FACE_VERIFICATION_ORIGINS.some((origin) => url.origin === origin);
+  if (!allowedOrigin || url.protocol !== "https:" || url.username || url.password) {
     throw new HuggingFaceOAuthError(
       "device authorization",
       `Hugging Face device authorization returned an invalid ${field} field.`,
