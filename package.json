@@ -23,6 +23,15 @@
     "oauth",
     "inference-providers"
   ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
   "files": [
     "index.ts",
     "src",
@@ -44,6 +53,8 @@
     "check": "npm run format && npm run lint && npm run typecheck && npm run test && npm run coverage && npm run dry"
   },
   "devDependencies": {
+    "@earendil-works/pi-ai": "0.81.1",
+    "@earendil-works/pi-coding-agent": "0.81.1",
     "@eslint/js": "9.39.2",
     "@stryker-mutator/core": "9.6.1",
     "@stryker-mutator/typescript-checker": "9.6.1",

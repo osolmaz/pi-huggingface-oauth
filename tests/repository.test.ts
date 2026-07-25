@@ -23,7 +23,7 @@ describe("repository contract", () => {
     expect(manifest["name"]).toBe("pi-huggingface-oauth");
     expect(manifest["version"]).toBe("0.0.0");
     expect(manifest["private"]).toBe(true);
-    expect(manifest["pi"]).toBeUndefined();
+    expect(manifest["pi"]).toEqual({ extensions: ["./index.ts"] });
   });
 
   it("documents the provider and persistence boundaries", () => {

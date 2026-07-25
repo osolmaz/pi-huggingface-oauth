@@ -6,6 +6,7 @@ typescript:
   dry:
     max_findings: 0
     paths:
+      - index.ts
       - src
     exclude:
       - "**/*.test.ts"
@@ -14,6 +15,7 @@ typescript:
       min_tokens: 100
   mutation:
     targets:
+      - index.ts
       - src
   dependency_boundaries:
     - from: src

@@ -12,6 +12,10 @@ The package adds OAuth to Pi's built-in `huggingface` provider. It must request 
 
 Pi owns credential persistence and request authentication. The package handles credentials only while exchanging, refreshing, or returning the current access token to Pi's provider layer.
 
+## Operational safeguards
+
+OAuth responses are size-bounded and parsed from `unknown`. The device flow uses per-request timeouts, a fixed deadline and abort-aware waits. Redirects are not followed, token errors are redacted, and transient refresh retries are bounded.
+
 ## Supported versions
 
-Security fixes will target the latest released version. Until the first release, the repository contains design material only and should not be used as an authentication component.
+Security fixes will target the latest released version. Until the first release, use the repository package only for development and manual verification with a revocable authorization.

@@ -1,6 +1,6 @@
 # Contributing
 
-The package is still in design. Review `SPEC.md` before proposing implementation changes, because it defines the provider boundary and OAuth behavior.
+Review `SPEC.md` before changing the implementation because it defines the provider boundary and OAuth behavior.
 
 ## Development rules
 
@@ -16,4 +16,4 @@ npm run slophammer
 git diff --check
 ```
 
-Mutation testing may be added with the implementation, but it should run only when requested or through a manual workflow.
+Mutation testing is available through `npm run mutate`, but it should run only when requested or through the manual CI job.
