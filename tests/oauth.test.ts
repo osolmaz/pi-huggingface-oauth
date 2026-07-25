@@ -138,7 +138,7 @@ describe("Pi OAuth adapter", () => {
         expiresInSeconds: 900,
       },
     ]);
-    expect(state.progress).toEqual(["Waiting for Hugging Face authorization…"]);
+    expect(state.progress).toEqual([]);
   });
 
   it("preserves or rotates the refresh token", async () => {

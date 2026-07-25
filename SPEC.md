@@ -87,7 +87,7 @@ Unknown response fields are ignored. Invalid required fields cause login to fail
 
 ## User interaction
 
-The extension reports the device flow through Pi's documented OAuth callbacks. It supplies the user code, verification URL, polling interval, and expiration duration to `onDeviceCode`.
+The extension reports the device flow through Pi's documented OAuth callbacks. It supplies the user code, verification URL, polling interval, and expiration duration to `onDeviceCode`. Pi renders one persistent waiting row after that callback, so routine polls must not emit `onProgress` events that append duplicate rows.
 
 The login function must not create a local HTTP listener, start a background process, or write its own credential file. Cancellation through Pi's `AbortSignal` stops polling promptly.
 

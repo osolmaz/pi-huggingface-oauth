@@ -42,17 +42,8 @@ export function createHuggingFaceOAuth(options: OAuthAdapterOptions = {}): OAuth
         intervalSeconds: device.intervalSeconds,
         expiresInSeconds: device.expiresInSeconds,
       });
-      const grant = await pollDeviceToken(
-        clientId,
-        device,
-        {
-          signal: callbacks.signal,
-          onProgress: (message) => {
-            callbacks.onProgress?.(message);
-          },
-        },
-        options.protocol,
-      );
+      // Pi adds one persistent waiting row after onDeviceCode; onProgress would append a new row on every poll.
+      const grant = await pollDeviceToken(clientId, device, { signal: callbacks.signal }, options.protocol);
       return {
         access: grant.accessToken,
         refresh: grant.refreshToken,

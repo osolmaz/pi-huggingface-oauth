@@ -245,10 +245,6 @@ async function wait(
   if (signal?.aborted === true) throw new HuggingFaceOAuthCancelledError(stage);
 }
 
-function reportProgress(callback: PollOptions["onProgress"]): void {
-  callback?.("Waiting for Hugging Face authorization…");
-}
-
 function adjustedInterval(current: number, outcome: PollOutcome): number {
   return Math.min(MAX_POLL_INTERVAL_SECONDS, current + (outcome.nextIntervalAdjustment ?? 0));
 }
@@ -270,7 +266,6 @@ export async function pollDeviceToken(
   while (deps.monotonicNow() < deadline) {
     await wait(deps, boundedPollWait(intervalSeconds, deps.monotonicNow(), deadline), options.signal, "token polling");
     if (deps.monotonicNow() >= deadline) break;
-    reportProgress(options.onProgress);
     const outcome = await pollOnce(clientId, device, options, deps, deadline);
     if (deps.monotonicNow() >= deadline) break;
     if (outcome.grant !== undefined) return outcome.grant;
