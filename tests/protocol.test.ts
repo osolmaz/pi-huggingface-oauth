@@ -128,9 +128,13 @@ describe("Hugging Face OAuth protocol", () => {
   });
 
   it("times out a stalled response body", async () => {
-    server.enqueue({ bodyDelayMs: 100, body: deviceResponse() });
+    const stalledResponse = new Response(new ReadableStream<Uint8Array>());
     await expect(
-      requestDeviceAuthorization(CLIENT_ID, {}, { endpoints: server.endpoints(), httpTimeoutMs: 10 }),
+      requestDeviceAuthorization(
+        CLIENT_ID,
+        {},
+        { fetch: async () => stalledResponse, endpoints: server.endpoints(), httpTimeoutMs: 10 },
+      ),
     ).rejects.toThrow("response timed out");
   });
 
