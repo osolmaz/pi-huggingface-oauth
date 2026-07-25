@@ -72,14 +72,14 @@ scope=inference-api
 
 A successful response must contain:
 
-| Field                       | Type   | Rules                                            |
-| --------------------------- | ------ | ------------------------------------------------ |
-| `device_code`               | string | Non-empty and never displayed or logged.         |
-| `user_code`                 | string | Non-empty and safe to display.                   |
-| `verification_uri`          | string | Absolute HTTPS URL on `huggingface.co`.          |
-| `verification_uri_complete` | string | Optional absolute HTTPS URL on `huggingface.co`. |
-| `expires_in`                | number | Positive duration in seconds.                    |
-| `interval`                  | number | Optional positive polling interval in seconds.   |
+| Field                       | Type   | Rules                                                       |
+| --------------------------- | ------ | ----------------------------------------------------------- |
+| `device_code`               | string | Non-empty and never displayed or logged.                    |
+| `user_code`                 | string | Non-empty and safe to display.                              |
+| `verification_uri`          | string | Absolute HTTPS URL on `huggingface.co` or `hf.co`.          |
+| `verification_uri_complete` | string | Optional absolute HTTPS URL on `huggingface.co` or `hf.co`. |
+| `expires_in`                | number | Positive duration in seconds.                               |
+| `interval`                  | number | Optional positive polling interval in seconds.              |
 
 If `interval` is absent, the extension uses five seconds. If `verification_uri_complete` is absent, it uses `verification_uri`.
 

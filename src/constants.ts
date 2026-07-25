@@ -1,4 +1,5 @@
 export const HUGGING_FACE_ORIGIN = "https://huggingface.co";
+export const HUGGING_FACE_VERIFICATION_ORIGINS = [HUGGING_FACE_ORIGIN, "https://hf.co"] as const;
 export const DEVICE_AUTHORIZATION_URL = `${HUGGING_FACE_ORIGIN}/oauth/device`;
 export const TOKEN_URL = `${HUGGING_FACE_ORIGIN}/oauth/token`;
 export const DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
