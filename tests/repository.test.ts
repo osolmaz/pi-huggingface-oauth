@@ -23,7 +23,11 @@ describe("repository contract", () => {
     expect(manifest["name"]).toBe("pi-huggingface-oauth");
     expect(manifest["version"]).toBe("0.0.0");
     expect(manifest["private"]).toBe(true);
-    expect(manifest["pi"]).toBeUndefined();
+    expect(manifest["pi"]).toEqual({ extensions: ["./index.ts"] });
+    expect(manifest["peerDependencies"]).toEqual({
+      "@earendil-works/pi-ai": ">=0.81.1",
+      "@earendil-works/pi-coding-agent": ">=0.81.1",
+    });
   });
 
   it("documents the provider and persistence boundaries", () => {

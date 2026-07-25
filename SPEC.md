@@ -8,8 +8,10 @@ This specification defines a Pi extension that adds Hugging Face OAuth to Pi's e
 pi-huggingface-oauth/
 ├── index.ts
 ├── src/
+│   ├── http.ts
 │   ├── oauth.ts
 │   ├── protocol.ts
+│   ├── redaction.ts
 │   └── validation.ts
 ├── package.json
 └── README.md
@@ -43,9 +45,9 @@ The application must meet these requirements:
 - It has no client secret.
 - Its allowed scope is `inference-api`.
 - It supports the OAuth 2.0 Device Authorization Grant.
-- Its public client ID is committed as a package constant.
+- Its public client ID is supplied through `PI_HUGGINGFACE_OAUTH_CLIENT_ID` until the project registers and verifies its release application.
 
-The package must not reuse the Hugging Face CLI client ID or require a secret in settings, environment variables, or source control.
+The client ID is public configuration. The package must not reuse the Hugging Face CLI client ID or require a client secret in settings, environment variables, or source control.
 
 ## Endpoints
 
@@ -60,10 +62,11 @@ Requests must use `application/x-www-form-urlencoded`. Redirects to another orig
 
 ## Device authorization request
 
-The device authorization request contains the public client ID:
+The device authorization request contains the public client ID and least-privilege scope:
 
 ```text
 client_id=<public-client-id>
+scope=inference-api
 ```
 
 A successful response must contain:

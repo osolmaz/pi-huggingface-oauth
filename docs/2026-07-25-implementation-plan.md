@@ -8,9 +8,13 @@ date: "2026-07-25"
 
 This plan implements browser login for Pi's built-in Hugging Face provider as a standalone package. Completion requires protocol tests, a real device-flow smoke test, package checks, and a documented security review.
 
+## Implementation status
+
+The protocol, Pi adapter, fake-server tests, package checks and security documentation are implemented. Registration of the project OAuth application and the real browser-flow smoke test remain manual release gates.
+
 ## Prerequisite
 
-Create a dedicated Hugging Face public OAuth application owned by the project maintainer. Configure only the `inference-api` scope and remove the client secret. Record the public client ID in source after verifying the application through a manual device authorization.
+Create a dedicated Hugging Face public OAuth application owned by the project maintainer. Configure only the `inference-api` scope and remove the client secret. Use `PI_HUGGINGFACE_OAUTH_CLIENT_ID` for development and manual verification. A later release may bundle the verified public client ID so users do not need this setup step.
 
 Do not use the Hugging Face CLI client ID. Do not put an OAuth secret in the repository or release environment.
 

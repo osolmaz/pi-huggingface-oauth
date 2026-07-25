@@ -30,4 +30,11 @@ export default tseslint.config(
       "max-lines-per-function": ["error", { max: 80, skipBlankLines: true, skipComments: true }],
     },
   },
+  {
+    files: ["tests/**/*.ts", "src/**/*.test.ts"],
+    rules: {
+      "@typescript-eslint/require-await": "off",
+      "max-lines-per-function": ["error", { max: 300, skipBlankLines: true, skipComments: true }],
+    },
+  },
 );
