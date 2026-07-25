@@ -22,6 +22,8 @@ The client ID is public configuration, not a secret. Do not use the Hugging Face
 
 ## Install and log in
 
+This package requires Pi 0.81.1 or newer.
+
 Until an npm release is available, install the repository package:
 
 ```bash
