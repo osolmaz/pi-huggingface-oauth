@@ -170,24 +170,21 @@ describe("Hugging Face OAuth protocol", () => {
     await expect(pending).rejects.toBeInstanceOf(HuggingFaceOAuthCancelledError);
   });
 
-  it("polls after waiting and handles authorization_pending", async () => {
+  it("polls quietly after waiting and handles authorization_pending", async () => {
     server.enqueue({ status: 400, body: { error: "authorization_pending" } }, { body: tokenResponse() });
     const clock = fakeClock();
-    const progress: string[] = [];
     const result = await pollDeviceToken(
       CLIENT_ID,
       device(),
+      {},
       {
-        onProgress: (message) => {
-          progress.push(message);
-        },
+        endpoints: server.endpoints(),
+        ...clock.dependencies,
       },
-      { endpoints: server.endpoints(), ...clock.dependencies },
     );
 
     expect(result).toEqual({ accessToken: ACCESS_TOKEN, refreshToken: REFRESH_TOKEN, expiresInSeconds: 3600 });
     expect(clock.waits).toEqual([1000, 1000]);
-    expect(progress).toHaveLength(2);
     expect(server.requests[0]?.form.get("grant_type")).toBe("urn:ietf:params:oauth:grant-type:device_code");
     expect(server.requests[0]?.form.get("device_code")).toBe(DEVICE_CODE);
   });

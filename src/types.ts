@@ -38,7 +38,6 @@ export type RefreshGrant = {
 
 export type PollOptions = {
   readonly signal?: AbortSignal | undefined;
-  readonly onProgress?: ((message: string) => void) | undefined;
 };
 
 export type RequestOptions = {
