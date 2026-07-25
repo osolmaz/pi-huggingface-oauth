@@ -62,14 +62,19 @@ async function readStream(
   }
 }
 
+function hasOversizedContentLength(response: Response, maximumBytes: number): boolean {
+  const contentLength = Number(response.headers.get("content-length"));
+  return Number.isFinite(contentLength) && contentLength > maximumBytes;
+}
+
 export async function readBoundedJson(
   response: Response,
   maximumBytes: number,
   stage: OAuthStage,
   options: { timeoutMs: number; signal?: AbortSignal | undefined },
 ): Promise<unknown> {
-  const contentLength = Number(response.headers.get("content-length"));
-  if (Number.isFinite(contentLength) && contentLength > maximumBytes) {
+  if (hasOversizedContentLength(response, maximumBytes)) {
+    void response.body?.cancel().catch(() => undefined);
     throw new HuggingFaceOAuthError(stage, `Hugging Face ${stage} returned an oversized response.`);
   }
   let text: string;
