@@ -22,23 +22,16 @@ pi-huggingface-oauth/
 
 ## Provider registration
 
-The extension must register one native provider through Pi's documented complete-provider API:
+The extension must compose Pi's existing provider through the documented provider-overlay API:
 
 ```ts
-pi.registerProvider(
-  createProvider({
-    id: "huggingface",
-    name: "Hugging Face",
-    baseUrl: "https://router.huggingface.co/v1",
-    auth: { apiKey: huggingFaceTokenAuth, oauth: huggingFaceOAuth },
-    models: canonicalHuggingFaceModels,
-    fetchModels: refreshHuggingFaceRoutes,
-    api: openAICompletionsApi(),
-  }),
-);
+pi.registerProvider("huggingface", {
+  oauth: huggingFaceOAuth,
+  refreshModels: refreshHuggingFaceModelsAndRoutes,
+});
 ```
 
-The provider is assembled from Pi's public canonical Hugging Face catalog, standard `HF_TOKEN` authentication helper, and built-in OpenAI Completions transport. It changes none of those contracts. The dynamic overlay contains only validated provider-specific route entries.
+The extension must not register a replacement native provider. Pi's built-in provider continues to own the bundled and remote canonical catalogs, standard `HF_TOKEN` authentication, router base URL, and OpenAI Completions transport. The refresh overlay projects the current canonical models together with validated provider-specific route entries.
 
 ## OAuth application
 
@@ -205,9 +198,9 @@ The provider order from Hugging Face is preserved. The extension does not add a 
 
 ## Model cache
 
-The extension uses only `RefreshModelsContext.store`, Pi's provider-scoped model store. The dynamic provider writes validated route models there, separate from the canonical catalog. A route snapshot is fresh for four hours.
+The extension uses only `RefreshModelsContext.store`, Pi's provider-scoped model store. Because Pi and the extension share that provider-scoped entry, the extension persists a sanitized combined snapshot containing Pi's applicable canonical catalog and validated routes. It preserves Pi's `lastModified` value and uses the older canonical or route check time so one cache cannot indefinitely postpone refresh of the other. A route snapshot is fresh for four hours, and reading a fresh snapshot does not renew its timestamp.
 
-Pi restores the stored dynamic overlay during offline startup. The extension adds no sidecar file or settings field.
+Pi restores the stored overlay during offline startup. The extension adds no sidecar file or settings field.
 
 ## Input validation
 

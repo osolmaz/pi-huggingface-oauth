@@ -1,6 +1,7 @@
 import type { OAuthLoginCallbacks } from "@earendil-works/pi-ai";
+import type { ProviderConfig } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import registerHuggingFaceOAuth, { createHuggingFaceProvider } from "../index.js";
+import registerHuggingFaceOAuth, { createHuggingFaceProviderConfig } from "../index.js";
 import type { ProviderRegistrar } from "../index.js";
 import { DEFAULT_CLIENT_ID } from "../src/constants.js";
 import { HuggingFaceOAuthError } from "../src/errors.js";
@@ -59,24 +60,25 @@ describe("Pi OAuth adapter", () => {
     await server.close();
   });
 
-  it("registers one native provider with OAuth, token auth, model refresh, and the built-in transport", () => {
-    const provider = createHuggingFaceProvider({ clientId: CLIENT_ID });
-    const registrations: unknown[] = [];
+  it("overlays OAuth and model refresh onto Pi's built-in provider", () => {
+    const config = createHuggingFaceProviderConfig({ clientId: CLIENT_ID });
+    const registrations: { name: string; config: ProviderConfig }[] = [];
     const registrar: ProviderRegistrar = {
-      registerProvider: (registered) => {
-        registrations.push(registered);
+      registerProvider: (name, registered) => {
+        registrations.push({ name, config: registered });
       },
     };
     registerHuggingFaceOAuth(registrar);
 
     expect(registrations).toHaveLength(1);
-    expect(provider.id).toBe("huggingface");
-    expect(provider.baseUrl).toBe("https://router.huggingface.co/v1");
-    expect(provider.auth.apiKey?.name).toBe("Hugging Face token");
-    expect(provider.auth.oauth?.name).toBe("Hugging Face Inference Providers");
-    expect(typeof provider.refreshModels).toBe("function");
-    expect(provider.getModels()).toHaveLength(49);
-    expect(provider.getModels()[0]?.api).toBe("openai-completions");
+    expect(registrations[0]?.name).toBe("huggingface");
+    expect(registrations[0]?.config.oauth?.name).toBe("Hugging Face Inference Providers");
+    expect(config.oauth?.name).toBe("Hugging Face Inference Providers");
+    expect(typeof config.refreshModels).toBe("function");
+    expect(config.models).toBeUndefined();
+    expect(config.baseUrl).toBeUndefined();
+    expect(config.apiKey).toBeUndefined();
+    expect(config.streamSimple).toBeUndefined();
   });
 
   it("uses the bundled public client ID by default", () => {

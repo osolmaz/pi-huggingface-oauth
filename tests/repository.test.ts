@@ -33,7 +33,8 @@ describe("repository contract", () => {
   it("documents the provider and persistence boundaries", () => {
     const spec = readText("SPEC.md");
     expect(spec).toContain("pi.registerProvider(");
-    expect(spec).toContain('id: "huggingface"');
+    expect(spec).toContain('pi.registerProvider("huggingface", {');
+    expect(spec).toContain("must not register a replacement native provider");
     expect(spec).toContain("inference-api");
     expect(spec).toContain("adds no session entries");
     expect(spec).toContain("provider model store");

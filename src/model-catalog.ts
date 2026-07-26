@@ -1,15 +1,7 @@
-import {
-  createProvider,
-  envApiKeyAuth,
-  type Api,
-  type Model,
-  type OAuthAuth,
-  type Provider,
-  type RefreshModelsContext,
-} from "@earendil-works/pi-ai";
-import { openAICompletionsApi } from "@earendil-works/pi-ai/compat";
-import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
-import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import { stat } from "node:fs/promises";
+import type { Api, Model, ModelsStoreEntry, RefreshModelsContext } from "@earendil-works/pi-ai";
+import { getBuiltinModelDataUrl, getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+import type { ProviderConfig, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import type { FetchLike } from "./types.js";
 
 export const HUGGING_FACE_MODELS_URL = "https://router.huggingface.co/v1/models";
@@ -47,6 +39,7 @@ export type ModelCatalogOptions = {
   readonly now?: () => number;
   readonly timeoutMs?: number;
   readonly maxResponseBytes?: number;
+  readonly localCatalogModifiedAt?: () => Promise<number | undefined>;
 };
 
 type RouterProvider = {
@@ -162,7 +155,7 @@ function copyCost(cost: Model<Api>["cost"]): Model<Api>["cost"] {
   };
 }
 
-function toConfig(model: Model<"openai-completions">, name = model.name): ProviderModelConfig {
+function toConfig(model: Model<Api>, name = model.name): ProviderModelConfig {
   return {
     id: model.id,
     name,
@@ -179,7 +172,7 @@ function toConfig(model: Model<"openai-completions">, name = model.name): Provid
   };
 }
 
-function baselineModels(): readonly Model<"openai-completions">[] {
+function baselineModels(): readonly Model<Api>[] {
   return getBuiltinModels("huggingface").map((model) => ({
     ...model,
     input: [...model.input],
@@ -197,7 +190,7 @@ function friendlyProviderName(id: string): string {
     .join(" ");
 }
 
-function routeConfig(base: Model<"openai-completions">, route: RouterProvider): ProviderModelConfig {
+function routeConfig(base: Model<Api>, route: RouterProvider): ProviderModelConfig {
   return {
     ...toConfig(base, `${base.name} · ${friendlyProviderName(route.id)}`),
     id: `${base.id}:${route.id}`,
@@ -207,10 +200,13 @@ function routeConfig(base: Model<"openai-completions">, route: RouterProvider): 
   };
 }
 
-export function deriveProviderModelOptions(catalog: RouterCatalog): ProviderModelConfig[] {
+export function deriveProviderModelOptions(
+  catalog: RouterCatalog,
+  canonicalModels: readonly Model<Api>[] = baselineModels(),
+): ProviderModelConfig[] {
   const catalogById = new Map(catalog.models.map((model) => [model.id, model]));
   const models: ProviderModelConfig[] = [];
-  for (const base of baselineModels()) {
+  for (const base of canonicalModels) {
     models.push(toConfig(base, `${base.name} · Auto`));
     const routes = catalogById.get(base.id)?.providers ?? [];
     for (const route of routes) models.push(routeConfig(base, route));
@@ -227,7 +223,7 @@ function splitRouteId(id: string, knownBaseIds: ReadonlySet<string>): { baseId: 
 }
 
 type CachedRouteContext = {
-  readonly baseById: ReadonlyMap<string, Model<"openai-completions">>;
+  readonly baseById: ReadonlyMap<string, Model<Api>>;
   readonly knownBaseIds: ReadonlySet<string>;
 };
 
@@ -268,9 +264,8 @@ function restoreCachedRoute(stored: unknown, context: CachedRouteContext): Provi
   return base === undefined ? undefined : routeConfig(base, metadata);
 }
 
-function cachedRoutes(entry: Awaited<ReturnType<RefreshModelsContext["store"]["read"]>>): ProviderModelConfig[] {
+function cachedRoutes(entry: ModelsStoreEntry | undefined, bases: readonly Model<Api>[]): ProviderModelConfig[] {
   if (entry === undefined || !Array.isArray(entry.models)) return [];
-  const bases = baselineModels();
   const context: CachedRouteContext = {
     baseById: new Map(bases.map((model) => [model.id, model])),
     knownBaseIds: new Set(bases.map((model) => model.id)),
@@ -461,15 +456,9 @@ function cacheIsFresh(checkedAt: number | undefined, now: number): boolean {
   return checkedAt !== undefined && checkedAt <= now && now - checkedAt < MODEL_CATALOG_REFRESH_INTERVAL_MS;
 }
 
-type StoredCatalog = Awaited<ReturnType<RefreshModelsContext["store"]["read"]>>;
-
-function storedRouteModels(stored: StoredCatalog): Model<"openai-completions">[] {
-  return cachedRoutes(stored).map(toStoredModel);
-}
-
 function useCachedRoutes(
   context: RefreshModelsContext,
-  routes: readonly Model<"openai-completions">[],
+  routes: readonly ProviderModelConfig[],
   checkedAt: number | undefined,
   now: number,
 ): boolean {
@@ -478,43 +467,123 @@ function useCachedRoutes(
   return cacheIsFresh(checkedAt, now);
 }
 
-async function fetchProviderRoutes(
+function isStoredHuggingFaceModel(model: Model<Api>): boolean {
+  return (
+    model.provider === HUGGING_FACE_PROVIDER &&
+    model.api === HUGGING_FACE_API &&
+    model.baseUrl === HUGGING_FACE_BASE_URL &&
+    boundedString(model.id, MAX_MODEL_ID_LENGTH + MAX_PROVIDER_ID_LENGTH + 1) !== undefined
+  );
+}
+
+function canonicalStoredModels(entry: ModelsStoreEntry | undefined): Model<Api>[] {
+  if (entry === undefined) return [];
+  const candidates = entry.models.filter(isStoredHuggingFaceModel);
+  const ids = new Set(candidates.map((model) => model.id));
+  return candidates.filter((model) => splitRouteId(model.id, ids) === undefined);
+}
+
+function remoteCatalogApplies(entry: ModelsStoreEntry | undefined, localModifiedAt: number | undefined): boolean {
+  if (entry === undefined) return false;
+  if (localModifiedAt === undefined) return true;
+  return entry.lastModified !== undefined && entry.lastModified > localModifiedAt;
+}
+
+function mergeCanonicalModels(entry: ModelsStoreEntry | undefined, localModifiedAt: number | undefined): Model<Api>[] {
+  const merged = [...baselineModels()];
+  if (!remoteCatalogApplies(entry, localModifiedAt)) return merged;
+  for (const model of canonicalStoredModels(entry)) {
+    const index = merged.findIndex((candidate) => candidate.id === model.id);
+    const copy = { ...model, input: [...model.input], cost: copyCost(model.cost) };
+    if (index >= 0) merged[index] = copy;
+    else merged.push(copy);
+  }
+  return merged;
+}
+
+function combineModels(
+  canonical: readonly Model<Api>[],
+  routes: readonly ProviderModelConfig[],
+): ProviderModelConfig[] {
+  return [...canonical.map((model) => toConfig(model, `${model.name.replace(/ · Auto$/u, "")} · Auto`)), ...routes];
+}
+
+function sharedCheckedAt(canonicalCheckedAt: number | undefined, routeCheckedAt: number): number {
+  if (canonicalCheckedAt === undefined) return routeCheckedAt;
+  return Math.min(canonicalCheckedAt, routeCheckedAt);
+}
+
+async function writeCombinedCatalog(
+  context: RefreshModelsContext,
+  stored: ModelsStoreEntry | undefined,
+  models: readonly ProviderModelConfig[],
+  checkedAt: number | undefined,
+): Promise<void> {
+  await context.store.write({
+    models: models.map(toStoredModel),
+    ...(checkedAt === undefined ? {} : { checkedAt }),
+    ...(stored?.lastModified === undefined ? {} : { lastModified: stored.lastModified }),
+  });
+}
+
+async function defaultLocalCatalogModifiedAt(): Promise<number | undefined> {
+  return stat(getBuiltinModelDataUrl("huggingface")).then(
+    (value) => value.mtimeMs,
+    () => undefined,
+  );
+}
+
+type ModelRefresh = NonNullable<ProviderConfig["refreshModels"]>;
+
+async function fetchCatalogPreservingCache(
   context: RefreshModelsContext,
   options: ModelCatalogOptions,
-  now: () => number,
-): Promise<readonly Model<"openai-completions">[]> {
-  const stored = await context.store.read();
-  const cached = storedRouteModels(stored);
-  if (!context.allowNetwork) return cached;
-  if (signalAborted(context.signal)) throw new Error("Hugging Face model catalog refresh was cancelled.");
-  if (useCachedRoutes(context, cached, stored?.checkedAt, now())) return cached;
-
-  const catalog = await fetchCatalog(options, context.signal);
-  if (signalAborted(context.signal)) throw new Error("Hugging Face model catalog refresh was cancelled.");
-  return deriveProviderModelOptions(catalog)
-    .filter((model) => model.id.includes(":"))
-    .map(toStoredModel);
+  stored: ModelsStoreEntry | undefined,
+  current: readonly ProviderModelConfig[],
+  retainedRoutes: readonly ProviderModelConfig[],
+  retainedCheckedAt: number | undefined,
+): Promise<RouterCatalog> {
+  try {
+    return await fetchCatalog(options, context.signal);
+  } catch (error) {
+    if (retainedRoutes.length > 0) {
+      await writeCombinedCatalog(context, stored, current, retainedCheckedAt);
+    }
+    throw error;
+  }
 }
 
-function automaticModels(): Model<"openai-completions">[] {
-  return baselineModels().map((model) => toStoredModel(toConfig(model, `${model.name} · Auto`)));
-}
-
-export function createProviderAwareHuggingFace(
-  oauth: OAuthAuth,
-  options: ModelCatalogOptions = {},
-): Provider<"openai-completions"> {
+export function createHuggingFaceModelRefresh(options: ModelCatalogOptions = {}): ModelRefresh {
   const now = options.now ?? Date.now;
-  return createProvider({
-    id: HUGGING_FACE_PROVIDER,
-    name: "Hugging Face",
-    baseUrl: HUGGING_FACE_BASE_URL,
-    auth: {
-      apiKey: envApiKeyAuth("Hugging Face token", ["HF_TOKEN"]),
-      oauth,
-    },
-    models: automaticModels(),
-    fetchModels: (context) => fetchProviderRoutes(context, options, now),
-    api: openAICompletionsApi(),
-  });
+  const localCatalogModifiedAt = options.localCatalogModifiedAt ?? defaultLocalCatalogModifiedAt;
+  let retainedRoutes: ProviderModelConfig[] = [];
+  let retainedCheckedAt: number | undefined;
+
+  return async (context): Promise<ProviderModelConfig[]> => {
+    const stored = await context.store.read();
+    const canonical = mergeCanonicalModels(stored, await localCatalogModifiedAt());
+    const restored = cachedRoutes(stored, canonical);
+    if (restored.length > 0) {
+      retainedRoutes = restored;
+      retainedCheckedAt = stored?.checkedAt;
+    }
+    const current = combineModels(canonical, retainedRoutes);
+    if (!context.allowNetwork || signalAborted(context.signal)) return current;
+    if (useCachedRoutes(context, retainedRoutes, retainedCheckedAt, now())) return current;
+
+    const catalog = await fetchCatalogPreservingCache(
+      context,
+      options,
+      stored,
+      current,
+      retainedRoutes,
+      retainedCheckedAt,
+    );
+    if (signalAborted(context.signal)) throw new Error("Hugging Face model catalog refresh was cancelled.");
+    retainedRoutes = deriveProviderModelOptions(catalog, canonical).filter((model) => model.id.includes(":"));
+    retainedCheckedAt = now();
+    const refreshed = combineModels(canonical, retainedRoutes);
+    await writeCombinedCatalog(context, stored, refreshed, sharedCheckedAt(stored?.checkedAt, retainedCheckedAt));
+    return refreshed;
+  };
 }

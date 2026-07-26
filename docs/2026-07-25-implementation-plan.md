@@ -42,11 +42,11 @@ The polling loop will use a monotonic deadline, wait before its first request, h
 
 ## Pi adapter
 
-Implement the extension with Pi's documented native-provider registration. Build the provider from Pi's public canonical Hugging Face models, standard token-auth helper, OpenAI Completions transport, OAuth adapter, and dynamic route fetcher.
+Implement the extension with Pi's documented provider-overlay registration. Compose OAuth and dynamic route refresh onto Pi's existing Hugging Face provider so Pi retains its bundled and remote canonical models, token authentication, router URL, and OpenAI Completions transport.
 
 The adapter translates Pi callbacks into the protocol operations. It passes device information through `onDeviceCode`, returns OAuth credentials, preserves rotated refresh tokens, and exposes only the current access token through the provider auth layer.
 
-The provider-specific overlay contains only validated suffixed routes. The canonical catalog, router URL, `HF_TOKEN` support, and inference transport retain Pi's built-in behavior.
+The refresh projection contains Pi's applicable canonical models plus validated suffixed routes. Its provider-store writes preserve Pi's remote-catalog metadata and never renew a route-cache timestamp without a network fetch.
 
 ## Test suite
 
