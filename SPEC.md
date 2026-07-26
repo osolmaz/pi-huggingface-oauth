@@ -1,6 +1,6 @@
 # Hugging Face OAuth for Pi specification
 
-This specification defines a Pi extension that adds Hugging Face OAuth to Pi's existing `huggingface` provider. The extension contributes one TypeScript entry point and does not replace Pi's model catalog or inference transport.
+This specification defines a Pi extension that adds Hugging Face OAuth and provider-specific model routes to Pi's existing `huggingface` provider. The extension contributes one TypeScript entry point, keeps Pi's canonical Hugging Face models and inference transport, and adds validated route variants through Pi's model-refresh API.
 
 ## Package shape
 
@@ -9,6 +9,7 @@ pi-huggingface-oauth/
 ├── index.ts
 ├── src/
 │   ├── http.ts
+│   ├── model-catalog.ts
 │   ├── oauth.ts
 │   ├── protocol.ts
 │   ├── redaction.ts
@@ -21,20 +22,23 @@ pi-huggingface-oauth/
 
 ## Provider registration
 
-The extension must register a partial override for the built-in provider:
+The extension must register one native provider through Pi's documented complete-provider API:
 
 ```ts
-pi.registerProvider("huggingface", {
-  oauth: {
-    name: "Hugging Face Inference Providers",
-    login: loginWithHuggingFace,
-    refreshToken: refreshHuggingFaceToken,
-    getApiKey: (credential) => credential.access,
-  },
-});
+pi.registerProvider(
+  createProvider({
+    id: "huggingface",
+    name: "Hugging Face",
+    baseUrl: "https://router.huggingface.co/v1",
+    auth: { apiKey: huggingFaceTokenAuth, oauth: huggingFaceOAuth },
+    models: canonicalHuggingFaceModels,
+    fetchModels: refreshHuggingFaceRoutes,
+    api: openAICompletionsApi(),
+  }),
+);
 ```
 
-The override must omit `models`, `baseUrl`, `api`, and `streamSimple`. Pi will therefore retain its built-in Hugging Face model definitions, OpenAI-compatible chat transport, router URL, and API-key authentication.
+The provider is assembled from Pi's public canonical Hugging Face catalog, standard `HF_TOKEN` authentication helper, and built-in OpenAI Completions transport. It changes none of those contracts. The dynamic overlay contains only validated provider-specific route entries.
 
 ## OAuth application
 
@@ -163,7 +167,47 @@ When no credential is stored, Pi may continue to resolve `HF_TOKEN` through its 
 
 `getApiKey` returns the current OAuth access token. Pi passes it as the bearer credential to its existing Hugging Face OpenAI-compatible transport.
 
-The extension must not inspect prompts, tool calls, model responses, billing data, or provider routing preferences. It must not add request headers beyond those produced by Pi's built-in provider.
+The extension must not inspect prompts, tool calls, model responses, billing data, or hidden routing preferences. Catalog discovery sends only an `Accept` header. Inference requests remain entirely under Pi's built-in provider transport and authentication.
+
+## Model discovery and provider routes
+
+Model discovery uses the public endpoint:
+
+```text
+GET https://router.huggingface.co/v1/models
+```
+
+The request sends `Accept: application/json` and no authorization header. It uses manual redirect handling, one end-to-end timeout, the caller's abort signal, and a four-mebibyte response limit.
+
+The response begins as `unknown`. Its root must contain a bounded `data` array. Every model entry must have a bounded model ID and a bounded `providers` array. Unknown fields are ignored.
+
+A provider-specific route is eligible only when all of these conditions hold:
+
+- `status` is `live`;
+- `supports_tools` is `true`;
+- the provider identifier is a bounded lowercase router identifier;
+- `context_length` is a positive bounded integer; and
+- `pricing.input` and `pricing.output` are finite non-negative numbers, or `is_free` is `true`.
+
+Malformed, unavailable, tool-incompatible, or incomplete provider entries do not enter Pi's picker. Duplicate models and providers keep their first occurrence so ordering remains deterministic.
+
+Each canonical Pi model remains available under its unsuffixed ID and receives an `· Auto` display label. Eligible providers become ordinary model entries with exact Hugging Face suffix IDs, for example:
+
+```text
+zai-org/GLM-5.2
+zai-org/GLM-5.2:novita
+zai-org/GLM-5.2:fireworks-ai
+```
+
+A route entry preserves the canonical model's API, base URL, input modalities, reasoning support, compatibility flags, and maximum output tokens. Its context window and input/output rates come from the selected provider. Cache read and write rates are zero because the router catalog does not publish provider-specific cache pricing. Maximum output tokens cannot exceed the route's context window.
+
+The provider order from Hugging Face is preserved. The extension does not add a global provider preference, rewrite model IDs before requests, or silently fail over a pinned provider suffix. The unsuffixed automatic entry retains Hugging Face's normal fastest-route behavior.
+
+## Model cache
+
+The extension uses only `RefreshModelsContext.store`, Pi's provider-scoped model store. The dynamic provider writes validated route models there, separate from the canonical catalog. A route snapshot is fresh for four hours.
+
+Pi restores the stored dynamic overlay during offline startup. The extension adds no sidecar file or settings field.
 
 ## Input validation
 
@@ -190,8 +234,8 @@ The extension must work after authentication in every Pi mode, including TUI, pr
 
 ## Persistence and runtime boundaries
 
-The extension adds no session entries and creates no sidecar files. Pi's existing auth store is the only persistent state. The extension uses no Pi private APIs and performs no network request until the user starts OAuth login or Pi refreshes an expiring credential.
+The extension adds no session entries and creates no sidecar files. Pi's existing auth store holds OAuth credentials, and Pi's existing provider model store holds the validated route catalog. The extension uses no Pi private APIs. Network access occurs only during OAuth operations or a Pi-authorized model refresh.
 
 ## Exclusions
 
-This package does not manage Hugging Face repositories, local model downloads, Inference Endpoints, Spaces, Jobs, or provider preference settings. It does not discover models or replace Pi's Hugging Face catalog.
+This package does not manage Hugging Face repositories, local model downloads, Inference Endpoints, Spaces, Jobs, or hidden provider preference settings. It does not replace Pi's inference transport, invent models outside Pi's canonical catalog, or expose routes whose published metadata is incomplete for coding-agent use.

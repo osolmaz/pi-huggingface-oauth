@@ -1,4 +1,10 @@
-import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
+import type {
+  AuthInteraction,
+  OAuthAuth,
+  OAuthCredential,
+  OAuthCredentials,
+  OAuthLoginCallbacks,
+} from "@earendil-works/pi-ai";
 import type { ProviderConfig } from "@earendil-works/pi-coding-agent";
 import { CLIENT_ID_ENV, DEFAULT_CLIENT_ID, REFRESH_SKEW_MS } from "./constants.js";
 import { HuggingFaceOAuthError } from "./errors.js";
@@ -29,6 +35,21 @@ export function credentialExpiry(now: number, expiresInSeconds: number): number 
   return now + Math.max(1, lifetime - skew);
 }
 
+async function refreshedCredential(
+  credentials: OAuthCredentials,
+  options: OAuthAdapterOptions,
+  signal?: AbortSignal,
+): Promise<OAuthCredentials> {
+  const clientId = resolveClientId(options);
+  const grant = await refreshAccessToken(clientId, credentials.refresh, { signal }, options.protocol);
+  const wallNow = options.wallNow ?? Date.now;
+  return {
+    access: grant.accessToken,
+    refresh: grant.refreshToken ?? credentials.refresh,
+    expires: credentialExpiry(wallNow(), grant.expiresInSeconds),
+  };
+}
+
 export function createHuggingFaceOAuth(options: OAuthAdapterOptions = {}): OAuthConfig {
   const wallNow = options.wallNow ?? Date.now;
   return {
@@ -51,19 +72,46 @@ export function createHuggingFaceOAuth(options: OAuthAdapterOptions = {}): OAuth
       };
     },
     async refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
-      const clientId = resolveClientId(options);
-      const grant = await refreshAccessToken(clientId, credentials.refresh, {}, options.protocol);
-      return {
-        access: grant.accessToken,
-        refresh: grant.refreshToken ?? credentials.refresh,
-        expires: credentialExpiry(wallNow(), grant.expiresInSeconds),
-      };
+      return refreshedCredential(credentials, options);
     },
     getApiKey(credentials: OAuthCredentials): string {
       if (credentials.access.trim().length === 0) {
         throw new HuggingFaceOAuthError("configuration", "The stored Hugging Face access token is invalid.");
       }
       return credentials.access;
+    },
+  };
+}
+
+function nativeLoginCallbacks(interaction: AuthInteraction): OAuthLoginCallbacks {
+  return {
+    onAuth: (info) => {
+      interaction.notify({ type: "auth_url", ...info });
+    },
+    onDeviceCode: (info) => {
+      interaction.notify({ type: "device_code", ...info });
+    },
+    onProgress: (message) => {
+      interaction.notify({ type: "progress", message });
+    },
+    onPrompt: (prompt) => interaction.prompt({ type: "text", ...prompt }),
+    onSelect: (prompt) => interaction.prompt({ type: "select", ...prompt }),
+    ...(interaction.signal === undefined ? {} : { signal: interaction.signal }),
+  };
+}
+
+export function createNativeHuggingFaceOAuth(options: OAuthAdapterOptions = {}): OAuthAuth {
+  const legacy = createHuggingFaceOAuth(options);
+  return {
+    name: legacy.name,
+    async login(interaction): Promise<OAuthCredential> {
+      return { ...(await legacy.login(nativeLoginCallbacks(interaction))), type: "oauth" };
+    },
+    async refresh(credential, signal): Promise<OAuthCredential> {
+      return { ...(await refreshedCredential(credential, options, signal)), type: "oauth" };
+    },
+    toAuth(credential): Promise<{ apiKey: string }> {
+      return Promise.resolve({ apiKey: legacy.getApiKey(credential) });
     },
   };
 }

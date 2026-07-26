@@ -8,13 +8,15 @@ Include the affected commit or release, reproduction steps, and the impact you o
 
 ## Security boundaries
 
-The package adds OAuth to Pi's built-in `huggingface` provider. It must request only the `inference-api` scope and must not read Hugging Face CLI credentials, Pi sessions, prompts, model responses, or repository data.
+The package adds OAuth and provider-specific routes to Pi's built-in `huggingface` provider. It must request only the `inference-api` scope and must not read Hugging Face CLI credentials, Pi sessions, prompts, model responses, or repository data.
 
-Pi owns credential persistence and request authentication. The package handles credentials only while exchanging, refreshing, or returning the current access token to Pi's provider layer.
+Pi owns credential persistence and request authentication. The package handles credentials only while exchanging, refreshing, or returning the current access token to Pi's provider layer. Model discovery uses Hugging Face's public router catalog and sends no credential.
 
 ## Operational safeguards
 
 OAuth responses are size-bounded and parsed from `unknown`. The device flow uses per-request timeouts, a fixed deadline and abort-aware waits. Redirects are not followed, token errors are redacted, and transient refresh retries are bounded.
+
+Router catalog responses are also size-bounded and parsed from `unknown` under one request deadline. Only validated live, tool-capable routes with complete context and pricing metadata are cached through Pi's provider model store.
 
 ## Supported versions
 

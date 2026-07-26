@@ -1,6 +1,6 @@
 import type { OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import registerHuggingFaceOAuth, { createHuggingFaceProviderOverride } from "../index.js";
+import registerHuggingFaceOAuth, { createHuggingFaceProvider } from "../index.js";
 import type { ProviderRegistrar } from "../index.js";
 import { DEFAULT_CLIENT_ID } from "../src/constants.js";
 import { HuggingFaceOAuthError } from "../src/errors.js";
@@ -59,24 +59,24 @@ describe("Pi OAuth adapter", () => {
     await server.close();
   });
 
-  it("registers only the OAuth portion of the built-in provider", () => {
-    const override = createHuggingFaceProviderOverride({ clientId: CLIENT_ID });
-    const registrations: { name: string; override: unknown }[] = [];
+  it("registers one native provider with OAuth, token auth, model refresh, and the built-in transport", () => {
+    const provider = createHuggingFaceProvider({ clientId: CLIENT_ID });
+    const registrations: unknown[] = [];
     const registrar: ProviderRegistrar = {
-      registerProvider: (name, config) => {
-        registrations.push({ name, override: config });
+      registerProvider: (registered) => {
+        registrations.push(registered);
       },
     };
     registerHuggingFaceOAuth(registrar);
 
     expect(registrations).toHaveLength(1);
-    expect(registrations[0]?.name).toBe("huggingface");
-    expect(Object.keys(override)).toEqual(["oauth"]);
-    expect(override.oauth?.name).toBe("Hugging Face Inference Providers");
-    expect(override.models).toBeUndefined();
-    expect(override.baseUrl).toBeUndefined();
-    expect(override.api).toBeUndefined();
-    expect(override.streamSimple).toBeUndefined();
+    expect(provider.id).toBe("huggingface");
+    expect(provider.baseUrl).toBe("https://router.huggingface.co/v1");
+    expect(provider.auth.apiKey?.name).toBe("Hugging Face token");
+    expect(provider.auth.oauth?.name).toBe("Hugging Face Inference Providers");
+    expect(typeof provider.refreshModels).toBe("function");
+    expect(provider.getModels()).toHaveLength(49);
+    expect(provider.getModels()[0]?.api).toBe("openai-completions");
   });
 
   it("uses the bundled public client ID by default", () => {
