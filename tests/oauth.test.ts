@@ -1,6 +1,7 @@
 import type { OAuthLoginCallbacks } from "@earendil-works/pi-ai";
+import type { ProviderConfig } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import registerHuggingFaceOAuth, { createHuggingFaceProviderOverride } from "../index.js";
+import registerHuggingFaceOAuth, { createHuggingFaceProviderConfig } from "../index.js";
 import type { ProviderRegistrar } from "../index.js";
 import { DEFAULT_CLIENT_ID } from "../src/constants.js";
 import { HuggingFaceOAuthError } from "../src/errors.js";
@@ -59,24 +60,25 @@ describe("Pi OAuth adapter", () => {
     await server.close();
   });
 
-  it("registers only the OAuth portion of the built-in provider", () => {
-    const override = createHuggingFaceProviderOverride({ clientId: CLIENT_ID });
-    const registrations: { name: string; override: unknown }[] = [];
+  it("overlays OAuth and model refresh onto Pi's built-in provider", () => {
+    const config = createHuggingFaceProviderConfig({ clientId: CLIENT_ID });
+    const registrations: { name: string; config: ProviderConfig }[] = [];
     const registrar: ProviderRegistrar = {
-      registerProvider: (name, config) => {
-        registrations.push({ name, override: config });
+      registerProvider: (name, registered) => {
+        registrations.push({ name, config: registered });
       },
     };
     registerHuggingFaceOAuth(registrar);
 
     expect(registrations).toHaveLength(1);
     expect(registrations[0]?.name).toBe("huggingface");
-    expect(Object.keys(override)).toEqual(["oauth"]);
-    expect(override.oauth?.name).toBe("Hugging Face Inference Providers");
-    expect(override.models).toBeUndefined();
-    expect(override.baseUrl).toBeUndefined();
-    expect(override.api).toBeUndefined();
-    expect(override.streamSimple).toBeUndefined();
+    expect(registrations[0]?.config.oauth?.name).toBe("Hugging Face Inference Providers");
+    expect(config.oauth?.name).toBe("Hugging Face Inference Providers");
+    expect(typeof config.refreshModels).toBe("function");
+    expect(config.models).toBeUndefined();
+    expect(config.baseUrl).toBeUndefined();
+    expect(config.apiKey).toBeUndefined();
+    expect(config.streamSimple).toBeUndefined();
   });
 
   it("uses the bundled public client ID by default", () => {

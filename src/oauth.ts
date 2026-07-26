@@ -29,6 +29,21 @@ export function credentialExpiry(now: number, expiresInSeconds: number): number 
   return now + Math.max(1, lifetime - skew);
 }
 
+async function refreshedCredential(
+  credentials: OAuthCredentials,
+  options: OAuthAdapterOptions,
+  signal?: AbortSignal,
+): Promise<OAuthCredentials> {
+  const clientId = resolveClientId(options);
+  const grant = await refreshAccessToken(clientId, credentials.refresh, { signal }, options.protocol);
+  const wallNow = options.wallNow ?? Date.now;
+  return {
+    access: grant.accessToken,
+    refresh: grant.refreshToken ?? credentials.refresh,
+    expires: credentialExpiry(wallNow(), grant.expiresInSeconds),
+  };
+}
+
 export function createHuggingFaceOAuth(options: OAuthAdapterOptions = {}): OAuthConfig {
   const wallNow = options.wallNow ?? Date.now;
   return {
@@ -51,13 +66,7 @@ export function createHuggingFaceOAuth(options: OAuthAdapterOptions = {}): OAuth
       };
     },
     async refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
-      const clientId = resolveClientId(options);
-      const grant = await refreshAccessToken(clientId, credentials.refresh, {}, options.protocol);
-      return {
-        access: grant.accessToken,
-        refresh: grant.refreshToken ?? credentials.refresh,
-        expires: credentialExpiry(wallNow(), grant.expiresInSeconds),
-      };
+      return refreshedCredential(credentials, options);
     },
     getApiKey(credentials: OAuthCredentials): string {
       if (credentials.access.trim().length === 0) {

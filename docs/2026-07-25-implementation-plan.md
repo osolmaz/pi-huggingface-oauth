@@ -10,7 +10,7 @@ This plan implements browser login for Pi's built-in Hugging Face provider as a 
 
 ## Implementation status
 
-The protocol, Pi adapter, fake-server tests, package checks and security documentation are implemented. The project OAuth application is registered and its public client ID is bundled. The real browser-flow smoke test remains a manual release gate.
+The protocol, Pi adapter, fake-server tests, package checks and security documentation are implemented. The project OAuth application is registered, its public client ID is bundled, and a real browser authorization has completed successfully. Provider-specific model routes are now discovered through Pi's model-refresh API; end-to-end routed inference remains the release gate.
 
 ## Prerequisite
 
@@ -42,11 +42,11 @@ The polling loop will use a monotonic deadline, wait before its first request, h
 
 ## Pi adapter
 
-Implement the extension with `pi.registerProvider("huggingface", { oauth })`.
+Implement the extension with Pi's documented provider-overlay registration. Compose OAuth and dynamic route refresh onto Pi's existing Hugging Face provider so Pi retains its bundled and remote canonical models, token authentication, router URL, and OpenAI Completions transport.
 
-The adapter will translate Pi callbacks into the protocol operations. It will pass device information through `onDeviceCode`, return `OAuthCredentials`, preserve rotated refresh tokens, and expose only the current access token through `getApiKey`.
+The adapter translates Pi callbacks into the protocol operations. It passes device information through `onDeviceCode`, returns OAuth credentials, preserves rotated refresh tokens, and exposes only the current access token through the provider auth layer.
 
-The registration must remain partial. Adding models, a base URL, an API identifier, or a stream function would replace behavior that Pi already maintains and will fail review.
+The refresh projection contains Pi's applicable canonical models plus validated suffixed routes. Its provider-store writes preserve Pi's remote-catalog metadata and never renew a route-cache timestamp without a network fetch.
 
 ## Test suite
 
@@ -103,4 +103,4 @@ Before the first release:
 
 ## Contract impact
 
-Normal Pi session history is unchanged. The package adds no persistent model, settings, or session schema. Pi writes the OAuth credential to its existing auth store. The implementation uses only documented provider registration and OAuth callback APIs.
+Normal Pi session history is unchanged. The package adds no settings or session schema. Pi writes the OAuth credential to its existing auth store and caches validated routes in its existing provider model store. The implementation uses only documented provider registration, model refresh, model store, and OAuth callback APIs.
