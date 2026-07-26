@@ -1,0 +1,160 @@
+name: Publish
+
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: publish-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  npm:
+    name: npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      - name: Validate package metadata
+        run: |
+          node - <<'NODE'
+          const { readFileSync } = require("node:fs");
+
+          const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+          const expectedName = "pi-huggingface-oauth";
+          const expectedRepository = "https://github.com/osolmaz/pi-huggingface-oauth";
+          const normalizeRepository = (value) =>
+            String(value ?? "")
+              .trim()
+              .replace(/^git\+/, "")
+              .replace(/\.git$/i, "")
+              .replace(/\/+$/, "");
+          const errors = [];
+
+          if (pkg.name !== expectedName) {
+            errors.push(`package.json name must be ${expectedName}; found ${pkg.name ?? "<missing>"}`);
+          }
+          if (pkg.private === true) {
+            errors.push("package.json must not be private for npm publishing.");
+          }
+          if (normalizeRepository(pkg.repository?.url) !== expectedRepository) {
+            errors.push(
+              `package.json repository.url must resolve to ${expectedRepository}; found ${normalizeRepository(pkg.repository?.url) || "<missing>"}`,
+            );
+          }
+          if (pkg.publishConfig?.access !== "public") {
+            errors.push("package.json publishConfig.access must be public.");
+          }
+          if (!pkg.pi?.extensions?.includes("./index.ts")) {
+            errors.push("package.json pi.extensions must include ./index.ts.");
+          }
+
+          if (errors.length > 0) {
+            for (const error of errors) console.error(error);
+            process.exit(1);
+          }
+
+          console.log("Package metadata validated.");
+          NODE
+
+      - name: Validate release tag and branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
+          git fetch --force origin "+refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+
+          node - <<'NODE'
+          const { execFileSync } = require("node:child_process");
+          const { readFileSync } = require("node:fs");
+
+          const defaultBranch = process.env.DEFAULT_BRANCH ?? "";
+          const releaseTag = process.env.RELEASE_TAG ?? "";
+
+          if (!/^v\d+\.\d+\.\d+$/.test(releaseTag)) {
+            console.error(`Release tags must match vX.Y.Z; received ${releaseTag || "<missing>"}.`);
+            process.exit(1);
+          }
+
+          const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+          const expectedTag = `v${pkg.version}`;
+          if (releaseTag !== expectedTag) {
+            console.error(
+              `Release tag ${releaseTag} does not match package.json version ${pkg.version}; expected ${expectedTag}.`,
+            );
+            process.exit(1);
+          }
+
+          const releaseSha = execFileSync("git", ["rev-list", "-n", "1", releaseTag], {
+            encoding: "utf8",
+          }).trim();
+          try {
+            execFileSync(
+              "git",
+              ["merge-base", "--is-ancestor", releaseSha, `origin/${defaultBranch}`],
+              { stdio: "ignore" },
+            );
+          } catch {
+            console.error(`Tagged commit ${releaseSha} is not contained in origin/${defaultBranch}.`);
+            process.exit(1);
+          }
+
+          console.log(`${releaseTag} matches package.json and points to origin/${defaultBranch}.`);
+          NODE
+
+      - name: Ensure version is unpublished
+        run: |
+          set -euo pipefail
+          package_name="$(node -p "require('./package.json').name")"
+          package_version="$(node -p "require('./package.json').version")"
+          published_version="$(npm view "$package_name@$package_version" version 2>/dev/null || true)"
+
+          if [ "$published_version" = "$package_version" ]; then
+            echo "$package_name@$package_version is already published on npm."
+            exit 1
+          fi
+
+          echo "Publishing $package_name@$package_version"
+
+      - run: npm run check
+      - run: npm run slophammer
+      - run: npm pack --dry-run
+      - run: git diff --check
+      - run: npm publish --access public --provenance
+
+      - name: Verify published package
+        run: |
+          set -euo pipefail
+          package_name="$(node -p "require('./package.json').name")"
+          package_version="$(node -p "require('./package.json').version")"
+
+          for attempt in $(seq 1 12); do
+            published_version="$(npm view "$package_name@$package_version" version 2>/dev/null || true)"
+            if [ "$published_version" = "$package_version" ]; then
+              echo "Verified $package_name@$package_version on npm."
+              exit 0
+            fi
+            echo "Waiting for npm registry propagation ($attempt/12)..."
+            sleep 5
+          done
+
+          echo "Could not verify $package_name@$package_version on npm."
+          exit 1

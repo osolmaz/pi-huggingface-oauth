@@ -1,7 +1,6 @@
 {
   "name": "pi-huggingface-oauth",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "description": "Hugging Face OAuth and provider-specific model routes for Pi",
   "license": "MIT",
   "type": "module",
@@ -15,6 +14,9 @@
   "homepage": "https://github.com/osolmaz/pi-huggingface-oauth#readme",
   "bugs": {
     "url": "https://github.com/osolmaz/pi-huggingface-oauth/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "keywords": [
     "pi-package",
@@ -35,6 +37,7 @@
   "files": [
     "index.ts",
     "src",
+    "CHANGELOG.md",
     "README.md",
     "SPEC.md",
     "SECURITY.md",

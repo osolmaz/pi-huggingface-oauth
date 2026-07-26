@@ -18,16 +18,31 @@ function parseRecord(text: string): Record<string, unknown> {
 }
 
 describe("repository contract", () => {
-  it("keeps package publication disabled until implementation", () => {
+  it("enables the first public npm release", () => {
     const manifest = parseRecord(readText("package.json"));
     expect(manifest["name"]).toBe("pi-huggingface-oauth");
-    expect(manifest["version"]).toBe("0.0.0");
-    expect(manifest["private"]).toBe(true);
+    expect(manifest["version"]).toBe("0.1.0");
+    expect(manifest["private"]).toBeUndefined();
+    expect(manifest["publishConfig"]).toEqual({ access: "public" });
+    expect(manifest["files"]).toContain("CHANGELOG.md");
     expect(manifest["pi"]).toEqual({ extensions: ["./index.ts"] });
     expect(manifest["peerDependencies"]).toEqual({
       "@earendil-works/pi-ai": ">=0.81.1",
       "@earendil-works/pi-coding-agent": ">=0.81.1",
     });
+  });
+
+  it("publishes from a version-matched GitHub Release through npm OIDC", () => {
+    const workflow = readText(".github/workflows/publish.yml");
+    expect(workflow).toContain("release:");
+    expect(workflow).toContain("types: [published]");
+    expect(workflow).toContain("id-token: write");
+    expect(workflow).toContain('node-version: "24"');
+    expect(workflow).toContain("package.json version");
+    expect(workflow).toContain("merge-base");
+    expect(workflow).toContain("npm publish --access public --provenance");
+    expect(workflow).not.toContain("NPM_TOKEN");
+    expect(workflow).not.toContain("workflow_dispatch");
   });
 
   it("documents the provider and persistence boundaries", () => {

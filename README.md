@@ -4,16 +4,12 @@ Hugging Face OAuth for Pi adds browser login and provider-specific Inference Pro
 
 The package keeps Pi's Hugging Face transport and token support. It adds device authorization for browser login and discovers live routes such as Novita and Fireworks from Hugging Face's public router catalog. Together and DeepInfra routes appear when available too.
 
-## Status
-
-The browser authorization flow has been verified with the project's registered public OAuth application. The package is installed from GitHub while provider-route behavior is finalized; it has not been released to npm.
-
 ## Install and log in
 
 This package requires Pi 0.81.1 or newer.
 
 ```bash
-pi install git:github.com/osolmaz/pi-huggingface-oauth@main
+pi install npm:pi-huggingface-oauth
 ```
 
 Restart Pi, run `/login`, choose Hugging Face, and select **Hugging Face Inference Providers**. Pi displays a browser URL and a short code. After approval, Pi stores the OAuth credential in its existing auth file.

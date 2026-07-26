@@ -10,7 +10,7 @@ This plan implements browser login for Pi's built-in Hugging Face provider as a 
 
 ## Implementation status
 
-The protocol, Pi adapter, fake-server tests, package checks and security documentation are implemented. The project OAuth application is registered, its public client ID is bundled, and a real browser authorization has completed successfully. Provider-specific model routes are now discovered through Pi's model-refresh API; end-to-end routed inference remains the release gate.
+The protocol, Pi adapter, fake-server tests, package checks and security documentation are implemented. The project OAuth application is registered, its public client ID is bundled, and real browser authorization and routed inference have completed successfully. Version 0.1.0 is prepared for a public npm release through a published GitHub Release and npm trusted publishing.
 
 ## Prerequisite
 
@@ -25,7 +25,7 @@ Add the Pi extension entry point and publishable package metadata.
 - Set `pi.extensions` to `./index.ts`.
 - Declare the supported Node and Pi versions.
 - Keep runtime dependencies empty unless the standard library and Pi APIs prove insufficient.
-- Include the source together with `README.md`, `SPEC.md`, `SECURITY.md` and `LICENSE` in the npm artifact.
+- Include the source together with `CHANGELOG.md`, `README.md`, `SPEC.md`, `SECURITY.md` and `LICENSE` in the npm artifact.
 - Keep the package private until the OAuth client and end-to-end login have been verified.
 
 Verification at this stage includes `npm pack --dry-run` and a manifest test that loads the package through Pi's resource loader.
