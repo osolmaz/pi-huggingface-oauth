@@ -42,13 +42,7 @@ GLM-5.2 · Fireworks
 GLM-5.2 · DeepInfra
 ```
 
-Provider-specific entries use Hugging Face's exact suffixed model IDs. They can also be selected from the command line:
-
-```bash
-pi --provider huggingface --model 'zai-org/GLM-5.2:fireworks-ai'
-```
-
-The unsuffixed model remains Hugging Face's automatic fastest route. A pinned provider entry does not silently change providers.
+Provider-specific entries use Hugging Face's exact suffixed model IDs. The unsuffixed model remains Hugging Face's automatic fastest route. A pinned provider entry does not silently change providers.
 
 The package lists live, tool-capable routes only when Hugging Face supplies their context limits and prices. It refreshes the public catalog when Pi refreshes models and keeps the validated result in Pi's provider model store for offline startup.
 

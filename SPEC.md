@@ -198,7 +198,7 @@ The provider order from Hugging Face is preserved. The extension does not add a 
 
 ## Model cache
 
-The extension uses only `RefreshModelsContext.store`, Pi's provider-scoped model store. Because Pi and the extension share that provider-scoped entry, the extension persists a sanitized combined snapshot containing Pi's applicable canonical catalog and validated routes. It preserves Pi's `lastModified` value and uses the older canonical or route check time so one cache cannot indefinitely postpone refresh of the other. A route snapshot is fresh for four hours, and reading a fresh snapshot does not renew its timestamp.
+The extension uses only `RefreshModelsContext.store`, Pi's provider-scoped model store. Because Pi and the extension share that provider-scoped entry, the extension persists a sanitized combined snapshot containing Pi's applicable canonical catalog and validated routes. It preserves Pi's `lastModified` value and uses the older canonical or route check time so one cache cannot indefinitely postpone refresh of the other. A route snapshot is fresh for four hours, including a successful snapshot with no eligible routes, and reading a fresh snapshot does not renew its timestamp.
 
 Pi restores the stored overlay during offline startup. The extension adds no sidecar file or settings field.
 

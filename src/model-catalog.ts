@@ -456,14 +456,13 @@ function cacheIsFresh(checkedAt: number | undefined, now: number): boolean {
   return checkedAt !== undefined && checkedAt <= now && now - checkedAt < MODEL_CATALOG_REFRESH_INTERVAL_MS;
 }
 
-function useCachedRoutes(
+function useCachedSnapshot(
   context: RefreshModelsContext,
-  routes: readonly ProviderModelConfig[],
+  hasSnapshot: boolean,
   checkedAt: number | undefined,
   now: number,
 ): boolean {
-  if (context.force) return false;
-  if (routes.length === 0) return false;
+  if (context.force || !hasSnapshot) return false;
   return cacheIsFresh(checkedAt, now);
 }
 
@@ -508,6 +507,22 @@ function combineModels(
   return [...canonical.map((model) => toConfig(model, `${model.name.replace(/ · Auto$/u, "")} · Auto`)), ...routes];
 }
 
+function hasStoredProjection(entry: ModelsStoreEntry | undefined, canonical: readonly Model<Api>[]): boolean {
+  if (entry === undefined) return false;
+  const canonicalIds = new Set(canonical.map((model) => model.id));
+  return entry.models.some(
+    (model) => isStoredHuggingFaceModel(model) && canonicalIds.has(model.id) && model.name.endsWith(" · Auto"),
+  );
+}
+
+function hasRestorableSnapshot(
+  routes: readonly ProviderModelConfig[],
+  entry: ModelsStoreEntry | undefined,
+  canonical: readonly Model<Api>[],
+): boolean {
+  return routes.length > 0 || hasStoredProjection(entry, canonical);
+}
+
 function sharedCheckedAt(canonicalCheckedAt: number | undefined, routeCheckedAt: number): number {
   if (canonicalCheckedAt === undefined) return routeCheckedAt;
   return Math.min(canonicalCheckedAt, routeCheckedAt);
@@ -540,13 +555,13 @@ async function fetchCatalogPreservingCache(
   options: ModelCatalogOptions,
   stored: ModelsStoreEntry | undefined,
   current: readonly ProviderModelConfig[],
-  retainedRoutes: readonly ProviderModelConfig[],
+  hasRetainedSnapshot: boolean,
   retainedCheckedAt: number | undefined,
 ): Promise<RouterCatalog> {
   try {
     return await fetchCatalog(options, context.signal);
   } catch (error) {
-    if (retainedRoutes.length > 0) {
+    if (hasRetainedSnapshot) {
       await writeCombinedCatalog(context, stored, current, retainedCheckedAt);
     }
     throw error;
@@ -557,30 +572,33 @@ export function createHuggingFaceModelRefresh(options: ModelCatalogOptions = {})
   const now = options.now ?? Date.now;
   const localCatalogModifiedAt = options.localCatalogModifiedAt ?? defaultLocalCatalogModifiedAt;
   let retainedRoutes: ProviderModelConfig[] = [];
+  let hasRetainedSnapshot = false;
   let retainedCheckedAt: number | undefined;
 
   return async (context): Promise<ProviderModelConfig[]> => {
     const stored = await context.store.read();
     const canonical = mergeCanonicalModels(stored, await localCatalogModifiedAt());
     const restored = cachedRoutes(stored, canonical);
-    if (restored.length > 0) {
+    if (hasRestorableSnapshot(restored, stored, canonical)) {
       retainedRoutes = restored;
+      hasRetainedSnapshot = true;
       retainedCheckedAt = stored?.checkedAt;
     }
     const current = combineModels(canonical, retainedRoutes);
     if (!context.allowNetwork || signalAborted(context.signal)) return current;
-    if (useCachedRoutes(context, retainedRoutes, retainedCheckedAt, now())) return current;
+    if (useCachedSnapshot(context, hasRetainedSnapshot, retainedCheckedAt, now())) return current;
 
     const catalog = await fetchCatalogPreservingCache(
       context,
       options,
       stored,
       current,
-      retainedRoutes,
+      hasRetainedSnapshot,
       retainedCheckedAt,
     );
     if (signalAborted(context.signal)) throw new Error("Hugging Face model catalog refresh was cancelled.");
     retainedRoutes = deriveProviderModelOptions(catalog, canonical).filter((model) => model.id.includes(":"));
+    hasRetainedSnapshot = true;
     retainedCheckedAt = now();
     const refreshed = combineModels(canonical, retainedRoutes);
     await writeCombinedCatalog(context, stored, refreshed, sharedCheckedAt(stored?.checkedAt, retainedCheckedAt));

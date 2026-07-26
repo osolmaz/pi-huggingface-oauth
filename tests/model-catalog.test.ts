@@ -222,6 +222,20 @@ describe("Hugging Face model refresh", () => {
     expect(route(forced, `${GLM_ID}:fireworks-ai`)).toBeDefined();
   });
 
+  it("caches a successful catalog with no eligible routes", async () => {
+    const store = new MemoryStore();
+    const fetch = vi.fn<FetchLike>(async () => jsonResponse(payload([])));
+    const first = catalogRefresh({ fetch, now: () => NOW });
+
+    const initial = await refreshProvider(first, refreshContext(store));
+    const restored = await refreshProvider(catalogRefresh({ fetch, now: () => NOW + 1_000 }), refreshContext(store));
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(initial).toHaveLength(getBuiltinModels("huggingface").length);
+    expect(restored).toHaveLength(getBuiltinModels("huggingface").length);
+    expect(store.entry?.checkedAt).toBe(NOW);
+  });
+
   it("refreshes an expired cache", async () => {
     const store = new MemoryStore();
     const first = catalogRefresh({ fetch: async () => jsonResponse(payload()), now: () => NOW });
