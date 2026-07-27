@@ -1,6 +1,5 @@
-import { stat } from "node:fs/promises";
 import type { Api, Model, ModelsStoreEntry, RefreshModelsContext } from "@earendil-works/pi-ai";
-import { getBuiltinModelDataUrl, getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+import { getBuiltinModelDataGeneratedAt, getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import type { ProviderConfig, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import type { FetchLike } from "./types.js";
 
@@ -541,11 +540,8 @@ async function writeCombinedCatalog(
   });
 }
 
-async function defaultLocalCatalogModifiedAt(): Promise<number | undefined> {
-  return stat(getBuiltinModelDataUrl("huggingface")).then(
-    (value) => value.mtimeMs,
-    () => undefined,
-  );
+function defaultLocalCatalogModifiedAt(): Promise<number | undefined> {
+  return Promise.resolve(getBuiltinModelDataGeneratedAt());
 }
 
 type ModelRefresh = NonNullable<ProviderConfig["refreshModels"]>;

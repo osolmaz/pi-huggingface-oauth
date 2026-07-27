@@ -20,7 +20,7 @@ Mutation testing is available through `npm run mutate`, but it should run only w
 
 ## Releases
 
-npm releases are published from GitHub Releases through `.github/workflows/publish.yml`. npm requires the package to exist before a trusted publisher can be configured. For the first release, an authenticated maintainer must reserve `pi-huggingface-oauth` on npm before creating the `v0.1.0` GitHub Release.
+npm releases are published from GitHub Releases through `.github/workflows/publish.yml` and npm Trusted Publishing.
 
 Before publishing a release:
 

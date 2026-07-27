@@ -191,6 +191,19 @@ describe("Hugging Face model refresh", () => {
     expect(store.entry?.checkedAt).toBe(NOW);
   });
 
+  it("uses Pi's generated catalog timestamp during a default refresh", async () => {
+    const config = createHuggingFaceProviderConfig({
+      clientId: "test-client",
+      env: {},
+      modelCatalog: { fetch: async () => jsonResponse(payload()), now: () => NOW },
+    });
+    if (config.refreshModels === undefined) throw new Error("Expected a refreshable provider");
+
+    const models = await config.refreshModels(refreshContext(new MemoryStore(), { force: true }));
+
+    expect(route(models, `${GLM_ID}:novita`)).toBeDefined();
+  });
+
   it("restores provider routes without network access", async () => {
     const store = new MemoryStore();
     const online = catalogRefresh({ fetch: async () => jsonResponse(payload()), now: Date.now });
@@ -332,7 +345,7 @@ describe("Hugging Face model refresh", () => {
     const refreshModels = catalogRefresh({ fetch, now: () => NOW });
     await expect(
       refreshProvider(refreshModels, refreshContext(new MemoryStore(), { signal: before.signal })),
-    ).resolves.toHaveLength(49);
+    ).resolves.toHaveLength(getBuiltinModels("huggingface").length);
     expect(fetch).not.toHaveBeenCalled();
 
     const during = new AbortController();

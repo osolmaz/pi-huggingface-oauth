@@ -6,7 +6,7 @@ The package keeps Pi's Hugging Face transport and token support. It adds device 
 
 ## Install and log in
 
-This package requires Pi 0.81.1 or newer.
+This package requires Pi 0.82.1 or newer.
 
 ```bash
 pi install npm:pi-huggingface-oauth
