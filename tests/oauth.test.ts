@@ -155,8 +155,15 @@ describe("Pi OAuth adapter", () => {
     });
     const current = { access: ACCESS_TOKEN, refresh: REFRESH_TOKEN, expires: 0 };
 
-    await expect(oauth.refreshToken(current)).resolves.toMatchObject({ access: "access-1", refresh: REFRESH_TOKEN });
-    await expect(oauth.refreshToken(current)).resolves.toMatchObject({ access: "access-2", refresh: "refresh-2" });
+    const signal = new AbortController().signal;
+    await expect(oauth.refreshToken(current, signal)).resolves.toMatchObject({
+      access: "access-1",
+      refresh: REFRESH_TOKEN,
+    });
+    await expect(oauth.refreshToken(current, signal)).resolves.toMatchObject({
+      access: "access-2",
+      refresh: "refresh-2",
+    });
   });
 
   it("returns only a non-empty access token to Pi", () => {

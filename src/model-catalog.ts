@@ -533,10 +533,12 @@ async function writeCombinedCatalog(
   models: readonly ProviderModelConfig[],
   checkedAt: number | undefined,
 ): Promise<void> {
-  await context.store.write({
-    models: models.map(toStoredModel),
-    ...(checkedAt === undefined ? {} : { checkedAt }),
-    ...(stored?.lastModified === undefined ? {} : { lastModified: stored.lastModified }),
+  await context.publish({
+    persist: {
+      models: models.map(toStoredModel),
+      ...(checkedAt === undefined ? {} : { checkedAt }),
+      ...(stored?.lastModified === undefined ? {} : { lastModified: stored.lastModified }),
+    },
   });
 }
 
@@ -572,7 +574,7 @@ export function createHuggingFaceModelRefresh(options: ModelCatalogOptions = {})
   let retainedCheckedAt: number | undefined;
 
   return async (context): Promise<ProviderModelConfig[]> => {
-    const stored = await context.store.read();
+    const stored = context.stored;
     const canonical = mergeCanonicalModels(stored, await localCatalogModifiedAt());
     const restored = cachedRoutes(stored, canonical);
     if (hasRestorableSnapshot(restored, stored, canonical)) {

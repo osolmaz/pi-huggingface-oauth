@@ -1,5 +1,5 @@
 import { InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
-import type { ModelsStoreEntry, ProviderModelsStore, RefreshModelsContext } from "@earendil-works/pi-ai";
+import type { ModelsPublication, ModelsStoreEntry, RefreshModelsContext } from "@earendil-works/pi-ai";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
@@ -40,35 +40,34 @@ function jsonResponse(value: unknown, init: ResponseInit = {}): Response {
   });
 }
 
-class MemoryStore implements ProviderModelsStore {
+class MemoryStore {
   public entry: ModelsStoreEntry | undefined;
 
   public constructor(entry?: ModelsStoreEntry) {
     this.entry = entry;
   }
 
-  public async read(): Promise<ModelsStoreEntry | undefined> {
-    return this.entry;
-  }
-
-  public async write(entry: ModelsStoreEntry): Promise<void> {
-    this.entry = entry;
-  }
-
-  public async delete(): Promise<void> {
-    this.entry = undefined;
+  public publish(publication: ModelsPublication): Promise<boolean> {
+    if (publication.persist === null) {
+      this.entry = undefined;
+    } else if (publication.persist !== undefined) {
+      this.entry = publication.persist;
+    }
+    publication.update?.();
+    return Promise.resolve(true);
   }
 }
 
 function refreshContext(
-  store: ProviderModelsStore,
+  store: MemoryStore,
   overrides: Partial<Pick<RefreshModelsContext, "allowNetwork" | "force" | "signal">> = {},
 ): RefreshModelsContext {
   return {
-    store,
+    ...(store.entry === undefined ? {} : { stored: store.entry }),
+    publish: (publication) => store.publish(publication),
     allowNetwork: overrides.allowNetwork ?? true,
     ...(overrides.force === undefined ? {} : { force: overrides.force }),
-    ...(overrides.signal === undefined ? {} : { signal: overrides.signal }),
+    signal: overrides.signal ?? new AbortController().signal,
   };
 }
 

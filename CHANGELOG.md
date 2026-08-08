@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0
+
+- Require Pi 0.84.1 or newer.
+- Publish refreshed model catalogs through Pi's generation-checked persistence API.
+
 ## 0.1.1
 
 - Restore model-catalog refreshes on Pi 0.82.1 and newer.

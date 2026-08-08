@@ -21,14 +21,14 @@ describe("repository contract", () => {
   it("defines the public npm package", () => {
     const manifest = parseRecord(readText("package.json"));
     expect(manifest["name"]).toBe("pi-huggingface-oauth");
-    expect(manifest["version"]).toBe("0.1.1");
+    expect(manifest["version"]).toBe("0.2.0");
     expect(manifest["private"]).toBeUndefined();
     expect(manifest["publishConfig"]).toEqual({ access: "public" });
     expect(manifest["files"]).toContain("CHANGELOG.md");
     expect(manifest["pi"]).toEqual({ extensions: ["./index.ts"] });
     expect(manifest["peerDependencies"]).toEqual({
-      "@earendil-works/pi-ai": ">=0.82.1",
-      "@earendil-works/pi-coding-agent": ">=0.82.1",
+      "@earendil-works/pi-ai": ">=0.84.1",
+      "@earendil-works/pi-coding-agent": ">=0.84.1",
     });
   });
 
