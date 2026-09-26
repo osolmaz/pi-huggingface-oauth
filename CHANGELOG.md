@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0
+
+- Fetch the router catalog on every refresh that may reach the network, so a new release changes the picker on the next refresh instead of waiting for a cache window to expire.
+- Keep the stored catalog as an offline copy for startup without network access and as the fallback after a failed fetch.
+- Send no request validator, because a `304 Not Modified` answer would leave only the previously derived route list to show.
+- Show one `· Auto` label on a route whose canonical model already carries it, instead of repeating the label.
+
 ## 0.3.0
 
 - Keep live, tool-capable routes that Hugging Face publishes without a price, instead of hiding them.

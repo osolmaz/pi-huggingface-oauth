@@ -195,11 +195,17 @@ zai-org/GLM-5.2:fireworks-ai
 
 A route entry preserves the canonical model's API, base URL, input modalities, reasoning support, compatibility flags, and maximum output tokens. Its context window comes from the selected provider, and its input and output rates are the provider's published rates when both exist and zero otherwise. Cache read and write rates are zero because the router catalog does not publish provider-specific cache pricing. Maximum output tokens cannot exceed the route's context window.
 
+The route display name is the canonical label followed by the provider name. Pi stores remote canonical models with an `· Auto` suffix, so the extension removes a trailing automatic label before composing the route name and adds one automatic label to the unsuffixed entry. A route therefore never shows two automatic labels.
+
 The provider order from Hugging Face is preserved. The extension does not add a global provider preference, rewrite model IDs before requests, or silently fail over a pinned provider suffix. The unsuffixed automatic entry retains Hugging Face's normal fastest-route behavior.
 
 ## Model cache
 
-The extension uses only `RefreshModelsContext.store`, Pi's provider-scoped model store. Because Pi and the extension share that provider-scoped entry, the extension persists a sanitized combined snapshot containing Pi's applicable canonical catalog and validated routes. It preserves Pi's `lastModified` value and uses the older canonical or route check time so one cache cannot indefinitely postpone refresh of the other. A route snapshot is fresh for four hours, including a successful snapshot with no eligible routes, and reading a fresh snapshot does not renew its timestamp.
+The extension uses only `RefreshModelsContext.store`, Pi's provider-scoped model store. Because Pi and the extension share that provider-scoped entry, the extension persists a sanitized combined snapshot containing Pi's applicable canonical catalog and validated routes. It preserves Pi's `lastModified` value and records the time of each completed fetch.
+
+The stored snapshot is an offline copy. It never replaces a fetch: every refresh that Pi allows to reach the network fetches the router catalog and derives routes from that response with the running code. A release that changes the route list therefore changes the picker on the next refresh, with no cache window to wait for. A snapshot with no eligible routes is still stored, so an offline start keeps working.
+
+The extension sends no request validator, because a `304 Not Modified` response would leave only the previously derived list to show. A failed fetch leaves the stored entry unchanged, and Pi keeps the routes it already holds.
 
 Pi restores the stored overlay during offline startup. The extension adds no sidecar file or settings field.
 

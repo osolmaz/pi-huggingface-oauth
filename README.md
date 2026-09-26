@@ -40,7 +40,7 @@ GLM-5.2 · DeepInfra
 
 Provider-specific entries use Hugging Face's exact suffixed model IDs. The unsuffixed model remains Hugging Face's automatic fastest route. A pinned provider entry does not silently change providers.
 
-The package lists live, tool-capable routes when Hugging Face supplies their context limits. A route that Hugging Face publishes without a price still appears, with zero rates and a ` (price not published)` name label, so a missing price is never shown as a guessed or free rate. It refreshes the public catalog when Pi refreshes models and keeps the validated result in Pi's provider model store for offline startup.
+The package lists live, tool-capable routes when Hugging Face supplies their context limits. A route that Hugging Face publishes without a price still appears, with zero rates and a ` (price not published)` name label, so a missing price is never shown as a guessed or free rate. It refreshes the public catalog whenever Pi refreshes models, so an upgrade changes the picker on the next refresh, and keeps the validated result in Pi's provider model store for offline startup.
 
 ## Design
 
