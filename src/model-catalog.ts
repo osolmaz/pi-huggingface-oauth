@@ -4,7 +4,6 @@ import type { ProviderConfig, ProviderModelConfig } from "@earendil-works/pi-cod
 import type { FetchLike } from "./types.js";
 
 export const HUGGING_FACE_MODELS_URL = "https://router.huggingface.co/v1/models";
-export const MODEL_CATALOG_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 export const DEFAULT_MODEL_CATALOG_TIMEOUT_MS = 15_000;
 export const MAX_MODEL_CATALOG_BYTES = 4 * 1024 * 1024;
 const MAX_CATALOG_MODELS = 2_048;
@@ -15,6 +14,7 @@ const MAX_CONTEXT_TOKENS = 16 * 1024 * 1024;
 const MAX_PRICE_PER_MILLION_TOKENS = 1_000_000;
 const MAX_ROUTE_NAME_LENGTH = 512;
 const PRICE_UNPUBLISHED_LABEL = " (price not published)";
+const AUTOMATIC_LABEL = " · Auto";
 const HUGGING_FACE_PROVIDER = "huggingface";
 const HUGGING_FACE_API = "openai-completions";
 const HUGGING_FACE_BASE_URL = "https://router.huggingface.co/v1";
@@ -202,13 +202,22 @@ function friendlyProviderName(id: string): string {
 }
 
 /**
+ * The canonical label without the automatic suffix. Pi stores remote canonical models with that
+ * suffix, and a route derived from one of them must not repeat it.
+ */
+function canonicalLabel(model: Model<Api>): string {
+  return model.name.endsWith(AUTOMATIC_LABEL) ? model.name.slice(0, -AUTOMATIC_LABEL.length) : model.name;
+}
+
+/**
  * A route keeps its place when the router publishes no price for it. The label states that the
  * zero rates below are unknown rather than free, and Pi stores it with the route, so a restored
  * cached route keeps the same name and rates.
  */
 function routeName(base: Model<Api>, routeId: string, pricing: RouterRoutePricing | undefined): string {
   const provider = friendlyProviderName(routeId);
-  return pricing === undefined ? `${base.name} · ${provider}${PRICE_UNPUBLISHED_LABEL}` : `${base.name} · ${provider}`;
+  const name = `${canonicalLabel(base)} · ${provider}`;
+  return pricing === undefined ? `${name}${PRICE_UNPUBLISHED_LABEL}` : name;
 }
 
 function routeCost(pricing: RouterRoutePricing | undefined): Model<Api>["cost"] {
@@ -502,20 +511,6 @@ async function fetchCatalog(options: ModelCatalogOptions, signal: AbortSignal | 
   }
 }
 
-function cacheIsFresh(checkedAt: number | undefined, now: number): boolean {
-  return checkedAt !== undefined && checkedAt <= now && now - checkedAt < MODEL_CATALOG_REFRESH_INTERVAL_MS;
-}
-
-function useCachedSnapshot(
-  context: RefreshModelsContext,
-  hasSnapshot: boolean,
-  checkedAt: number | undefined,
-  now: number,
-): boolean {
-  if (context.force || !hasSnapshot) return false;
-  return cacheIsFresh(checkedAt, now);
-}
-
 function isStoredHuggingFaceModel(model: Model<Api>): boolean {
   return (
     model.provider === HUGGING_FACE_PROVIDER &&
@@ -554,40 +549,19 @@ function combineModels(
   canonical: readonly Model<Api>[],
   routes: readonly ProviderModelConfig[],
 ): ProviderModelConfig[] {
-  return [...canonical.map((model) => toConfig(model, `${model.name.replace(/ · Auto$/u, "")} · Auto`)), ...routes];
-}
-
-function hasStoredProjection(entry: ModelsStoreEntry | undefined, canonical: readonly Model<Api>[]): boolean {
-  if (entry === undefined) return false;
-  const canonicalIds = new Set(canonical.map((model) => model.id));
-  return entry.models.some(
-    (model) => isStoredHuggingFaceModel(model) && canonicalIds.has(model.id) && model.name.endsWith(" · Auto"),
-  );
-}
-
-function hasRestorableSnapshot(
-  routes: readonly ProviderModelConfig[],
-  entry: ModelsStoreEntry | undefined,
-  canonical: readonly Model<Api>[],
-): boolean {
-  return routes.length > 0 || hasStoredProjection(entry, canonical);
-}
-
-function sharedCheckedAt(canonicalCheckedAt: number | undefined, routeCheckedAt: number): number {
-  if (canonicalCheckedAt === undefined) return routeCheckedAt;
-  return Math.min(canonicalCheckedAt, routeCheckedAt);
+  return [...canonical.map((model) => toConfig(model, `${canonicalLabel(model)}${AUTOMATIC_LABEL}`)), ...routes];
 }
 
 async function writeCombinedCatalog(
   context: RefreshModelsContext,
   stored: ModelsStoreEntry | undefined,
   models: readonly ProviderModelConfig[],
-  checkedAt: number | undefined,
+  checkedAt: number,
 ): Promise<void> {
   await context.publish({
     persist: {
       models: models.map(toStoredModel),
-      ...(checkedAt === undefined ? {} : { checkedAt }),
+      checkedAt,
       ...(stored?.lastModified === undefined ? {} : { lastModified: stored.lastModified }),
     },
   });
@@ -599,58 +573,28 @@ function defaultLocalCatalogModifiedAt(): Promise<number | undefined> {
 
 type ModelRefresh = NonNullable<ProviderConfig["refreshModels"]>;
 
-async function fetchCatalogPreservingCache(
-  context: RefreshModelsContext,
-  options: ModelCatalogOptions,
-  stored: ModelsStoreEntry | undefined,
-  current: readonly ProviderModelConfig[],
-  hasRetainedSnapshot: boolean,
-  retainedCheckedAt: number | undefined,
-): Promise<RouterCatalog> {
-  try {
-    return await fetchCatalog(options, context.signal);
-  } catch (error) {
-    if (hasRetainedSnapshot) {
-      await writeCombinedCatalog(context, stored, current, retainedCheckedAt);
-    }
-    throw error;
-  }
-}
-
+/**
+ * The stored entry is an offline copy of the route list, never a reason to skip the network. Every
+ * refresh that may reach the network fetches the router catalog and derives routes with the running
+ * code, so a new release changes the picker without waiting for any cache window to expire. The
+ * request carries no validator, because a `304 Not Modified` response would leave the extension
+ * with only the previously derived list to show.
+ */
 export function createHuggingFaceModelRefresh(options: ModelCatalogOptions = {}): ModelRefresh {
   const now = options.now ?? Date.now;
   const localCatalogModifiedAt = options.localCatalogModifiedAt ?? defaultLocalCatalogModifiedAt;
-  let retainedRoutes: ProviderModelConfig[] = [];
-  let hasRetainedSnapshot = false;
-  let retainedCheckedAt: number | undefined;
 
   return async (context): Promise<ProviderModelConfig[]> => {
     const stored = context.stored;
     const canonical = mergeCanonicalModels(stored, await localCatalogModifiedAt());
     const restored = cachedRoutes(stored, canonical);
-    if (hasRestorableSnapshot(restored, stored, canonical)) {
-      retainedRoutes = restored;
-      hasRetainedSnapshot = true;
-      retainedCheckedAt = stored?.checkedAt;
-    }
-    const current = combineModels(canonical, retainedRoutes);
-    if (!context.allowNetwork || signalAborted(context.signal)) return current;
-    if (useCachedSnapshot(context, hasRetainedSnapshot, retainedCheckedAt, now())) return current;
+    if (!context.allowNetwork || signalAborted(context.signal)) return combineModels(canonical, restored);
 
-    const catalog = await fetchCatalogPreservingCache(
-      context,
-      options,
-      stored,
-      current,
-      hasRetainedSnapshot,
-      retainedCheckedAt,
-    );
+    const catalog = await fetchCatalog(options, context.signal);
     if (signalAborted(context.signal)) throw new Error("Hugging Face model catalog refresh was cancelled.");
-    retainedRoutes = deriveProviderModelOptions(catalog, canonical).filter((model) => model.id.includes(":"));
-    hasRetainedSnapshot = true;
-    retainedCheckedAt = now();
-    const refreshed = combineModels(canonical, retainedRoutes);
-    await writeCombinedCatalog(context, stored, refreshed, sharedCheckedAt(stored?.checkedAt, retainedCheckedAt));
+    const routes = deriveProviderModelOptions(catalog, canonical).filter((model) => model.id.includes(":"));
+    const refreshed = combineModels(canonical, routes);
+    await writeCombinedCatalog(context, stored, refreshed, now());
     return refreshed;
   };
 }
