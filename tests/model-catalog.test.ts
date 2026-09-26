@@ -186,7 +186,7 @@ describe("Hugging Face model refresh", () => {
       return jsonResponse(payload());
     };
     const store = new MemoryStore();
-    const refreshModels = catalogRefresh({ fetch, now: () => NOW });
+    const refreshModels = catalogRefresh({ fetch });
 
     const models = await refreshProvider(refreshModels, refreshContext(store));
 
@@ -196,14 +196,13 @@ describe("Hugging Face model refresh", () => {
     expect(new Headers(requests[0]?.init?.headers).get("authorization")).toBeNull();
     expect(store.entry?.models).toHaveLength(getBuiltinModels("huggingface").length + 1);
     expect(store.entry?.models.some((model) => model.id === `${GLM_ID}:novita`)).toBe(true);
-    expect(store.entry?.checkedAt).toBe(NOW);
   });
 
   it("uses Pi's generated catalog timestamp during a default refresh", async () => {
     const config = createHuggingFaceProviderConfig({
       clientId: "test-client",
       env: {},
-      modelCatalog: { fetch: async () => jsonResponse(payload()), now: () => NOW },
+      modelCatalog: { fetch: async () => jsonResponse(payload()) },
     });
     if (config.refreshModels === undefined) throw new Error("Expected a refreshable provider");
 
@@ -214,10 +213,10 @@ describe("Hugging Face model refresh", () => {
 
   it("restores provider routes without network access", async () => {
     const store = new MemoryStore();
-    const online = catalogRefresh({ fetch: async () => jsonResponse(payload()), now: Date.now });
+    const online = catalogRefresh({ fetch: async () => jsonResponse(payload()) });
     await refreshProvider(online, refreshContext(store));
     const fetch = vi.fn<FetchLike>();
-    const offline = catalogRefresh({ fetch, now: Date.now });
+    const offline = catalogRefresh({ fetch });
 
     const models = await refreshProvider(offline, refreshContext(store, { allowNetwork: false }));
 
@@ -229,7 +228,6 @@ describe("Hugging Face model refresh", () => {
     const store = new MemoryStore();
     const online = catalogRefresh({
       fetch: async () => jsonResponse(payload([provider({ provider: "fireworks-ai", pricing: undefined })])),
-      now: () => NOW,
     });
     await refreshProvider(online, refreshContext(store));
     const stored = store.entry?.models.find((model) => model.id === `${GLM_ID}:fireworks-ai`);
@@ -238,7 +236,7 @@ describe("Hugging Face model refresh", () => {
     expect(stored?.cost).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
 
     const fetch = vi.fn<FetchLike>();
-    const offline = catalogRefresh({ fetch, now: () => NOW });
+    const offline = catalogRefresh({ fetch });
     const models = await refreshProvider(offline, refreshContext(store, { allowNetwork: false }));
 
     expect(route(models, `${GLM_ID}:fireworks-ai`)).toMatchObject({
@@ -251,28 +249,26 @@ describe("Hugging Face model refresh", () => {
 
   it("refreshes the router catalog even when the stored snapshot is recent", async () => {
     const store = new MemoryStore();
-    const first = catalogRefresh({ fetch: async () => jsonResponse(payload()), now: () => NOW });
+    const first = catalogRefresh({ fetch: async () => jsonResponse(payload()) });
     await refreshProvider(first, refreshContext(store));
     const secondFetch = vi.fn<FetchLike>(async () => jsonResponse(payload([provider({ provider: "fireworks-ai" })])));
-    const second = catalogRefresh({ fetch: secondFetch, now: () => NOW + 1_000 });
+    const second = catalogRefresh({ fetch: secondFetch });
 
     const models = await refreshProvider(second, refreshContext(store));
 
     expect(secondFetch).toHaveBeenCalledOnce();
-    expect(store.entry?.checkedAt).toBe(NOW + 1_000);
     expect(route(models, `${GLM_ID}:fireworks-ai`)).toBeDefined();
   });
 
   it("adds a route that an older stored snapshot lacks on the next refresh", async () => {
     const store = new MemoryStore();
-    const older = catalogRefresh({ fetch: async () => jsonResponse(payload()), now: () => NOW });
+    const older = catalogRefresh({ fetch: async () => jsonResponse(payload()) });
     await refreshProvider(older, refreshContext(store));
     expect(store.entry?.models.some((model) => model.id === `${GLM_ID}:fireworks-ai`)).toBe(false);
 
     const upgraded = catalogRefresh({
       fetch: async () =>
         jsonResponse(payload([provider(), provider({ provider: "fireworks-ai", pricing: undefined })])),
-      now: () => NOW + 60_000,
     });
     const models = await refreshProvider(upgraded, refreshContext(store));
 
@@ -287,10 +283,9 @@ describe("Hugging Face model refresh", () => {
     const store = new MemoryStore();
     const first = catalogRefresh({
       fetch: async () => jsonResponse(payload([provider(), provider({ provider: "fireworks-ai" })])),
-      now: () => NOW,
     });
     await refreshProvider(first, refreshContext(store));
-    const second = catalogRefresh({ fetch: async () => jsonResponse(payload()), now: () => NOW + 1_000 });
+    const second = catalogRefresh({ fetch: async () => jsonResponse(payload()) });
 
     const models = await refreshProvider(second, refreshContext(store));
 
@@ -300,10 +295,10 @@ describe("Hugging Face model refresh", () => {
 
   it("keeps the last stored catalog when a refresh fails", async () => {
     const store = new MemoryStore();
-    const first = catalogRefresh({ fetch: async () => jsonResponse(payload()), now: () => NOW });
+    const first = catalogRefresh({ fetch: async () => jsonResponse(payload()) });
     await refreshProvider(first, refreshContext(store));
     const before = structuredClone(store.entry);
-    const failing = catalogRefresh({ fetch: async () => new Response(null, { status: 503 }), now: () => NOW + 1_000 });
+    const failing = catalogRefresh({ fetch: async () => new Response(null, { status: 503 }) });
 
     await expect(refreshProvider(failing, refreshContext(store))).rejects.toThrow(/status 503/u);
 
@@ -314,13 +309,31 @@ describe("Hugging Face model refresh", () => {
     const store = new MemoryStore();
     const fetch = vi.fn<FetchLike>(async () => jsonResponse(payload([])));
 
-    const initial = await refreshProvider(catalogRefresh({ fetch, now: () => NOW }), refreshContext(store));
-    const restored = await refreshProvider(catalogRefresh({ fetch, now: () => NOW + 1_000 }), refreshContext(store));
+    const initial = await refreshProvider(catalogRefresh({ fetch }), refreshContext(store));
+    const restored = await refreshProvider(catalogRefresh({ fetch }), refreshContext(store));
 
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(initial).toHaveLength(getBuiltinModels("huggingface").length);
     expect(restored).toHaveLength(getBuiltinModels("huggingface").length);
-    expect(store.entry?.checkedAt).toBe(NOW + 1_000);
+  });
+
+  it("keeps Pi's catalog freshness metadata while it stores routes", async () => {
+    const base = getBuiltinModels("huggingface").find((model) => model.id === GLM_ID);
+    if (base === undefined) throw new Error("Expected the canonical GLM model");
+    const store = new MemoryStore({
+      models: [base],
+      checkedAt: NOW,
+      lastModified: NOW - 500,
+      etag: 'W/"canonical"',
+    });
+    const refreshModels = catalogRefresh({ fetch: async () => jsonResponse(payload()) });
+
+    const models = await refreshProvider(refreshModels, refreshContext(store));
+
+    expect(route(models, `${GLM_ID}:novita`)).toBeDefined();
+    expect(store.entry?.checkedAt).toBe(NOW);
+    expect(store.entry?.lastModified).toBe(NOW - 500);
+    expect(store.entry?.etag).toBe('W/"canonical"');
   });
 
   it("preserves Pi's newer remote canonical models beside validated routes", async () => {
@@ -328,7 +341,7 @@ describe("Hugging Face model refresh", () => {
     if (canonical === undefined) throw new Error("Expected a canonical Hugging Face model");
     const future = { ...canonical, id: "future/model", name: "Future model" };
     const store = new MemoryStore({ models: [future], checkedAt: NOW - 1, lastModified: NOW });
-    const refreshModels = catalogRefresh({ fetch: async () => jsonResponse(payload()), now: () => NOW });
+    const refreshModels = catalogRefresh({ fetch: async () => jsonResponse(payload()) });
 
     const models = await refreshProvider(refreshModels, refreshContext(store));
 
@@ -344,7 +357,6 @@ describe("Hugging Face model refresh", () => {
     const store = new MemoryStore({ models: [future], checkedAt: NOW, lastModified: NOW });
     const refreshModels = catalogRefresh({
       fetch: async () => jsonResponse({ data: [{ id: "future/model", providers: [provider()] }] }),
-      now: () => NOW,
     });
 
     const models = await refreshProvider(refreshModels, refreshContext(store));
@@ -372,7 +384,6 @@ describe("Hugging Face model refresh", () => {
       modelCatalog: {
         fetch: async () => jsonResponse(payload()),
         localCatalogModifiedAt: async () => 0,
-        now: () => NOW,
       },
     });
 
@@ -398,7 +409,7 @@ describe("Hugging Face model refresh", () => {
       },
     ];
     for (const testCase of cases) {
-      const refreshModels = catalogRefresh({ fetch: testCase.fetch, maxResponseBytes: 10, now: () => NOW });
+      const refreshModels = catalogRefresh({ fetch: testCase.fetch, maxResponseBytes: 10 });
       await expect(refreshProvider(refreshModels, refreshContext(new MemoryStore()))).rejects.toThrow(testCase.message);
     }
   });
@@ -408,7 +419,7 @@ describe("Hugging Face model refresh", () => {
     const stalledBody = new ReadableStream<Uint8Array>({ start: () => undefined });
     const fetches: FetchLike[] = [neverFetch, async () => new Response(stalledBody)];
     for (const fetch of fetches) {
-      const refreshModels = catalogRefresh({ fetch, timeoutMs: 5, now: () => NOW });
+      const refreshModels = catalogRefresh({ fetch, timeoutMs: 5 });
       await expect(refreshProvider(refreshModels, refreshContext(new MemoryStore()))).rejects.toThrow(/timed out/u);
     }
   });
@@ -417,7 +428,7 @@ describe("Hugging Face model refresh", () => {
     const before = new AbortController();
     before.abort();
     const fetch = vi.fn<FetchLike>();
-    const refreshModels = catalogRefresh({ fetch, now: () => NOW });
+    const refreshModels = catalogRefresh({ fetch });
     await expect(
       refreshProvider(refreshModels, refreshContext(new MemoryStore(), { signal: before.signal })),
     ).resolves.toHaveLength(getBuiltinModels("huggingface").length);
@@ -433,7 +444,7 @@ describe("Hugging Face model refresh", () => {
       return new Promise<Response>(() => undefined);
     };
     const request = refreshProvider(
-      catalogRefresh({ fetch: pending, timeoutMs: 1_000, now: () => NOW }),
+      catalogRefresh({ fetch: pending, timeoutMs: 1_000 }),
       refreshContext(new MemoryStore(), { signal: during.signal }),
     );
     await started;

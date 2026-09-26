@@ -201,7 +201,9 @@ The provider order from Hugging Face is preserved. The extension does not add a 
 
 ## Model cache
 
-The extension uses only `RefreshModelsContext.store`, Pi's provider-scoped model store. Because Pi and the extension share that provider-scoped entry, the extension persists a sanitized combined snapshot containing Pi's applicable canonical catalog and validated routes. It preserves Pi's `lastModified` value and records the time of each completed fetch.
+The extension uses only `RefreshModelsContext.store`, Pi's provider-scoped model store. Because Pi and the extension share that provider-scoped entry, the extension persists a sanitized combined snapshot containing Pi's applicable canonical catalog and validated routes. Pi's own remote-catalog provider shares the entry and owns its freshness metadata, so the extension copies `checkedAt`, `lastModified`, and `etag` unchanged. An extension refresh therefore never advances Pi's freshness window and never drops Pi's request validator.
+
+The persisted canonical models come from the snapshot Pi captured before the refresh phase, so an offline start can lag one remote canonical refresh behind Pi's in-memory catalog.
 
 The stored snapshot is an offline copy. It never replaces a fetch: every refresh that Pi allows to reach the network fetches the router catalog and derives routes from that response with the running code. A release that changes the route list therefore changes the picker on the next refresh, with no cache window to wait for. A snapshot with no eligible routes is still stored, so an offline start keeps working.
 

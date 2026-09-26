@@ -37,7 +37,6 @@ const PROVIDER_NAMES: Readonly<Record<string, string>> = {
 
 export type ModelCatalogOptions = {
   readonly fetch?: FetchLike;
-  readonly now?: () => number;
   readonly timeoutMs?: number;
   readonly maxResponseBytes?: number;
   readonly localCatalogModifiedAt?: () => Promise<number | undefined>;
@@ -552,17 +551,22 @@ function combineModels(
   return [...canonical.map((model) => toConfig(model, `${canonicalLabel(model)}${AUTOMATIC_LABEL}`)), ...routes];
 }
 
+/**
+ * Pi's own remote-catalog provider shares this provider entry and owns its freshness metadata. The
+ * extension copies `checkedAt`, `lastModified`, and `etag` unchanged, so an extension refresh never
+ * advances Pi's freshness window and never drops Pi's request validator.
+ */
 async function writeCombinedCatalog(
   context: RefreshModelsContext,
   stored: ModelsStoreEntry | undefined,
   models: readonly ProviderModelConfig[],
-  checkedAt: number,
 ): Promise<void> {
   await context.publish({
     persist: {
       models: models.map(toStoredModel),
-      checkedAt,
+      ...(stored?.checkedAt === undefined ? {} : { checkedAt: stored.checkedAt }),
       ...(stored?.lastModified === undefined ? {} : { lastModified: stored.lastModified }),
+      ...(stored?.etag === undefined ? {} : { etag: stored.etag }),
     },
   });
 }
@@ -581,7 +585,6 @@ type ModelRefresh = NonNullable<ProviderConfig["refreshModels"]>;
  * with only the previously derived list to show.
  */
 export function createHuggingFaceModelRefresh(options: ModelCatalogOptions = {}): ModelRefresh {
-  const now = options.now ?? Date.now;
   const localCatalogModifiedAt = options.localCatalogModifiedAt ?? defaultLocalCatalogModifiedAt;
 
   return async (context): Promise<ProviderModelConfig[]> => {
@@ -594,7 +597,7 @@ export function createHuggingFaceModelRefresh(options: ModelCatalogOptions = {})
     if (signalAborted(context.signal)) throw new Error("Hugging Face model catalog refresh was cancelled.");
     const routes = deriveProviderModelOptions(catalog, canonical).filter((model) => model.id.includes(":"));
     const refreshed = combineModels(canonical, routes);
-    await writeCombinedCatalog(context, stored, refreshed, now());
+    await writeCombinedCatalog(context, stored, refreshed);
     return refreshed;
   };
 }

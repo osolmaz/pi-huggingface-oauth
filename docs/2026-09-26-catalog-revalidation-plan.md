@@ -23,6 +23,8 @@ network, and the route list must always be derived by the code that is running n
 - Keep the stored entry for offline startup and for failed fetches. Never use it as a timer.
 - Keep the stored entry in Pi's provider-scoped model store. Add no sidecar file, settings field, or
   session entry.
+- Copy Pi's `checkedAt`, `lastModified`, and `etag` unchanged, because Pi's remote-catalog provider
+  shares the entry and owns those fields. An extension refresh must never advance Pi's window.
 - Send no validator or conditional request, because a `304 Not Modified` response would force the
   extension to reuse the old derived list, which is the failure this plan removes.
 - Keep the unnamed `· Auto` entries and every validated provider route unchanged.
@@ -42,6 +44,10 @@ Implemented in 0.4.0. Local checks pass, and a live check over the stored snapsh
 `~/.pi/agent/models-store.json` returned `zai-org/GLM-5.3-Flash:fireworks-ai` as
 `GLM-5.3-Flash · Fireworks (price not published)` with zero rates. That check also showed a repeated
 `· Auto` label in route names, which this release fixed.
+
+Review found one P1: the first version wrote a new `checkedAt` on every fetch, which renewed Pi's own
+four-hour window for the shared entry and stopped Pi from revalidating its canonical catalog. The
+implementation now copies Pi's freshness fields unchanged.
 
 ## Assumptions and open questions
 
