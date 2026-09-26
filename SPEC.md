@@ -178,11 +178,12 @@ A provider-specific route is eligible only when all of these conditions hold:
 
 - `status` is `live`;
 - `supports_tools` is `true`;
-- the provider identifier is a bounded lowercase router identifier;
-- `context_length` is a positive bounded integer; and
-- `pricing.input` and `pricing.output` are finite non-negative numbers, or `is_free` is `true`.
+- the provider identifier is a bounded lowercase router identifier; and
+- `context_length` is a positive bounded integer.
 
-Malformed, unavailable, tool-incompatible, or incomplete provider entries do not enter Pi's picker. Duplicate models and providers keep their first occurrence so ordering remains deterministic.
+Malformed, unavailable, and tool-incompatible provider entries do not enter Pi's picker. Duplicate models and providers keep their first occurrence so ordering remains deterministic.
+
+A published price is not an eligibility condition, because the router publishes no price for some live routes. The route uses `pricing.input` and `pricing.output` when both are finite non-negative numbers, or when `is_free` is `true`. A route without a complete price pair keeps its place with zero input and output rates and a display name that ends with ` (price not published)`. Zero rates therefore mean an unknown price, not a free route. The label travels with the stored route, so a cached route restores with the same name and rates.
 
 Each canonical Pi model remains available under its unsuffixed ID and receives an `· Auto` display label. Eligible providers become ordinary model entries with exact Hugging Face suffix IDs, for example:
 
@@ -192,7 +193,7 @@ zai-org/GLM-5.2:novita
 zai-org/GLM-5.2:fireworks-ai
 ```
 
-A route entry preserves the canonical model's API, base URL, input modalities, reasoning support, compatibility flags, and maximum output tokens. Its context window and input/output rates come from the selected provider. Cache read and write rates are zero because the router catalog does not publish provider-specific cache pricing. Maximum output tokens cannot exceed the route's context window.
+A route entry preserves the canonical model's API, base URL, input modalities, reasoning support, compatibility flags, and maximum output tokens. Its context window comes from the selected provider, and its input and output rates are the provider's published rates when both exist and zero otherwise. Cache read and write rates are zero because the router catalog does not publish provider-specific cache pricing. Maximum output tokens cannot exceed the route's context window.
 
 The provider order from Hugging Face is preserved. The extension does not add a global provider preference, rewrite model IDs before requests, or silently fail over a pinned provider suffix. The unsuffixed automatic entry retains Hugging Face's normal fastest-route behavior.
 
