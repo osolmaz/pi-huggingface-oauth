@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0
+
+- Keep live, tool-capable routes that Hugging Face publishes without a price, instead of hiding them.
+- Label such a route ` (price not published)` and give it zero rates, and keep the label through the model cache.
+
 ## 0.2.0
 
 - Require Pi 0.84.1 or newer.

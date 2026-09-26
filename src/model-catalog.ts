@@ -13,6 +13,8 @@ const MAX_MODEL_ID_LENGTH = 512;
 const MAX_PROVIDER_ID_LENGTH = 64;
 const MAX_CONTEXT_TOKENS = 16 * 1024 * 1024;
 const MAX_PRICE_PER_MILLION_TOKENS = 1_000_000;
+const MAX_ROUTE_NAME_LENGTH = 512;
+const PRICE_UNPUBLISHED_LABEL = " (price not published)";
 const HUGGING_FACE_PROVIDER = "huggingface";
 const HUGGING_FACE_API = "openai-completions";
 const HUGGING_FACE_BASE_URL = "https://router.huggingface.co/v1";
@@ -41,11 +43,16 @@ export type ModelCatalogOptions = {
   readonly localCatalogModifiedAt?: () => Promise<number | undefined>;
 };
 
+type RouterRoutePricing = {
+  readonly inputPrice: number;
+  readonly outputPrice: number;
+};
+
 type RouterProvider = {
   readonly id: string;
   readonly contextWindow: number;
-  readonly inputPrice: number;
-  readonly outputPrice: number;
+  /** Absent when the router publishes no complete input and output price pair for the route. */
+  readonly pricing?: RouterRoutePricing;
 };
 
 type RouterModel = {
@@ -91,19 +98,24 @@ function providerPrice(source: Readonly<Record<string, unknown>>, field: "input"
   return finiteNumber(record(source["pricing"])?.[field], MAX_PRICE_PER_MILLION_TOKENS);
 }
 
+function routePricing(source: Readonly<Record<string, unknown>>): RouterRoutePricing | undefined {
+  const inputPrice = providerPrice(source, "input");
+  const outputPrice = providerPrice(source, "output");
+  if (inputPrice === undefined) return undefined;
+  if (outputPrice === undefined) return undefined;
+  return { inputPrice, outputPrice };
+}
+
 function parseProvider(value: unknown): RouterProvider | undefined {
   const source = record(value);
   if (source?.["status"] !== "live") return undefined;
   if (source["supports_tools"] !== true) return undefined;
   const id = providerId(source["provider"]);
   const contextWindow = positiveInteger(source["context_length"], MAX_CONTEXT_TOKENS);
-  const inputPrice = providerPrice(source, "input");
-  const outputPrice = providerPrice(source, "output");
   if (id === undefined) return undefined;
   if (contextWindow === undefined) return undefined;
-  if (inputPrice === undefined) return undefined;
-  if (outputPrice === undefined) return undefined;
-  return { id, contextWindow, inputPrice, outputPrice };
+  const pricing = routePricing(source);
+  return pricing === undefined ? { id, contextWindow } : { id, contextWindow, pricing };
 }
 
 function parseProviders(values: readonly unknown[]): RouterProvider[] {
@@ -189,11 +201,25 @@ function friendlyProviderName(id: string): string {
     .join(" ");
 }
 
+/**
+ * A route keeps its place when the router publishes no price for it. The label states that the
+ * zero rates below are unknown rather than free, and Pi stores it with the route, so a restored
+ * cached route keeps the same name and rates.
+ */
+function routeName(base: Model<Api>, routeId: string, pricing: RouterRoutePricing | undefined): string {
+  const provider = friendlyProviderName(routeId);
+  return pricing === undefined ? `${base.name} · ${provider}${PRICE_UNPUBLISHED_LABEL}` : `${base.name} · ${provider}`;
+}
+
+function routeCost(pricing: RouterRoutePricing | undefined): Model<Api>["cost"] {
+  return { input: pricing?.inputPrice ?? 0, output: pricing?.outputPrice ?? 0, cacheRead: 0, cacheWrite: 0 };
+}
+
 function routeConfig(base: Model<Api>, route: RouterProvider): ProviderModelConfig {
   return {
-    ...toConfig(base, `${base.name} · ${friendlyProviderName(route.id)}`),
+    ...toConfig(base, routeName(base, route.id, route.pricing)),
     id: `${base.id}:${route.id}`,
-    cost: { input: route.inputPrice, output: route.outputPrice, cacheRead: 0, cacheWrite: 0 },
+    cost: routeCost(route.pricing),
     contextWindow: route.contextWindow,
     maxTokens: Math.min(base.maxTokens, route.contextWindow),
   };
@@ -236,21 +262,46 @@ function isStoredHuggingFaceRoute(source: Readonly<Record<string, unknown>>): bo
 
 type CachedRouteMetadata = RouterProvider & { readonly baseId: string };
 
+type StoredRouteShape = {
+  readonly baseId: string;
+  readonly routeId: string;
+  readonly contextWindow: number;
+};
+
+function storedRouteShape(
+  source: Readonly<Record<string, unknown>>,
+  knownBaseIds: ReadonlySet<string>,
+): StoredRouteShape | undefined {
+  const id = boundedString(source["id"], MAX_MODEL_ID_LENGTH + MAX_PROVIDER_ID_LENGTH + 1);
+  if (id === undefined) return undefined;
+  const split = splitRouteId(id, knownBaseIds);
+  if (split === undefined) return undefined;
+  const contextWindow = positiveInteger(source["contextWindow"], MAX_CONTEXT_TOKENS);
+  if (contextWindow === undefined) return undefined;
+  return { baseId: split.baseId, routeId: split.routeId, contextWindow };
+}
+
+function storedRoutePricing(source: Readonly<Record<string, unknown>>): RouterRoutePricing | undefined {
+  const cost = record(source["cost"]);
+  const inputPrice = finiteNumber(cost?.["input"], MAX_PRICE_PER_MILLION_TOKENS);
+  const outputPrice = finiteNumber(cost?.["output"], MAX_PRICE_PER_MILLION_TOKENS);
+  if (inputPrice === undefined) return undefined;
+  if (outputPrice === undefined) return undefined;
+  return { inputPrice, outputPrice };
+}
+
 function cachedRouteMetadata(
   source: Readonly<Record<string, unknown>>,
   knownBaseIds: ReadonlySet<string>,
 ): CachedRouteMetadata | undefined {
-  const id = boundedString(source["id"], MAX_MODEL_ID_LENGTH + MAX_PROVIDER_ID_LENGTH + 1);
-  const split = id === undefined ? undefined : splitRouteId(id, knownBaseIds);
-  if (split === undefined) return undefined;
-  const contextWindow = positiveInteger(source["contextWindow"], MAX_CONTEXT_TOKENS);
-  const cost = record(source["cost"]);
-  const inputPrice = finiteNumber(cost?.["input"], MAX_PRICE_PER_MILLION_TOKENS);
-  const outputPrice = finiteNumber(cost?.["output"], MAX_PRICE_PER_MILLION_TOKENS);
-  if (contextWindow === undefined) return undefined;
-  if (inputPrice === undefined) return undefined;
-  if (outputPrice === undefined) return undefined;
-  return { baseId: split.baseId, id: split.routeId, contextWindow, inputPrice, outputPrice };
+  const shape = storedRouteShape(source, knownBaseIds);
+  if (shape === undefined) return undefined;
+  const name = boundedString(source["name"], MAX_ROUTE_NAME_LENGTH);
+  if (name === undefined) return undefined;
+  const { baseId, routeId, contextWindow } = shape;
+  if (name.endsWith(PRICE_UNPUBLISHED_LABEL)) return { baseId, id: routeId, contextWindow };
+  const pricing = storedRoutePricing(source);
+  return pricing === undefined ? undefined : { baseId, id: routeId, contextWindow, pricing };
 }
 
 function restoreCachedRoute(stored: unknown, context: CachedRouteContext): ProviderModelConfig | undefined {

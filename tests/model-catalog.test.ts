@@ -117,7 +117,7 @@ describe("Hugging Face router catalog", () => {
     expect(novita?.reasoning).toBe(canonical.find((model) => model.id === GLM_ID)?.reasoning);
   });
 
-  it("keeps live tool routes with complete limits and prices", () => {
+  it("keeps live tool routes and labels routes without a published price", () => {
     const models = deriveProviderModelOptions(
       parseRouterCatalog(
         payload([
@@ -127,6 +127,7 @@ describe("Hugging Face router catalog", () => {
           provider({ provider: "no-tools", supports_tools: false }),
           provider({ provider: "no-context", context_length: undefined }),
           provider({ provider: "no-price", pricing: undefined }),
+          provider({ provider: "half-price", pricing: { input: 1 } }),
           provider({ provider: "free-route", pricing: undefined, is_free: true }),
         ]),
       ),
@@ -135,13 +136,20 @@ describe("Hugging Face router catalog", () => {
     expect(models.filter((model) => model.id.startsWith(`${GLM_ID}:`)).map((model) => model.id)).toEqual([
       `${GLM_ID}:novita`,
       `${GLM_ID}:fireworks-ai`,
+      `${GLM_ID}:no-price`,
+      `${GLM_ID}:half-price`,
       `${GLM_ID}:free-route`,
     ]);
-    expect(models.find((model) => model.id.endsWith(":free-route"))?.cost).toEqual({
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
+    expect(route(models, `${GLM_ID}:no-price`)).toMatchObject({
+      name: "GLM-5.2 · No Price (price not published)",
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1_048_576,
+    });
+    expect(route(models, `${GLM_ID}:half-price`)?.name).toBe("GLM-5.2 · Half Price (price not published)");
+    expect(route(models, `${GLM_ID}:fireworks-ai`)?.name).toBe("GLM-5.2 · Fireworks");
+    expect(route(models, `${GLM_ID}:free-route`)).toMatchObject({
+      name: "GLM-5.2 · Free Route",
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     });
   });
 
@@ -153,8 +161,11 @@ describe("Hugging Face router catalog", () => {
 
     expect(catalog.models).toHaveLength(1);
     expect(catalog.models[0]?.providers).toEqual([
-      { id: "novita", contextWindow: 1_048_576, inputPrice: 1.4, outputPrice: 4.4 },
+      { id: "novita", contextWindow: 1_048_576, pricing: { inputPrice: 1.4, outputPrice: 4.4 } },
     ]);
+    expect(
+      parseRouterCatalog(payload([provider({ provider: "no-price", pricing: undefined })])).models[0]?.providers,
+    ).toEqual([{ id: "no-price", contextWindow: 1_048_576 }]);
   });
 
   it.each([
@@ -213,6 +224,30 @@ describe("Hugging Face model refresh", () => {
     const models = await refreshProvider(offline, refreshContext(store, { allowNetwork: false }));
 
     expect(route(models, `${GLM_ID}:novita`)).toBeDefined();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("restores a route without a published price with its label and zero rates", async () => {
+    const store = new MemoryStore();
+    const online = catalogRefresh({
+      fetch: async () => jsonResponse(payload([provider({ provider: "fireworks-ai", pricing: undefined })])),
+      now: () => NOW,
+    });
+    await refreshProvider(online, refreshContext(store));
+    const stored = store.entry?.models.find((model) => model.id === `${GLM_ID}:fireworks-ai`);
+
+    expect(stored?.name).toBe("GLM-5.2 · Fireworks (price not published)");
+    expect(stored?.cost).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+
+    const fetch = vi.fn<FetchLike>();
+    const offline = catalogRefresh({ fetch, now: () => NOW });
+    const models = await refreshProvider(offline, refreshContext(store, { allowNetwork: false }));
+
+    expect(route(models, `${GLM_ID}:fireworks-ai`)).toMatchObject({
+      name: "GLM-5.2 · Fireworks (price not published)",
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1_048_576,
+    });
     expect(fetch).not.toHaveBeenCalled();
   });
 

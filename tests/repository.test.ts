@@ -20,8 +20,9 @@ function parseRecord(text: string): Record<string, unknown> {
 describe("repository contract", () => {
   it("defines the public npm package", () => {
     const manifest = parseRecord(readText("package.json"));
+    const documentedVersion = /^## (\d+\.\d+\.\d+)$/mu.exec(readText("CHANGELOG.md"))?.[1];
     expect(manifest["name"]).toBe("pi-huggingface-oauth");
-    expect(manifest["version"]).toBe("0.2.0");
+    expect(manifest["version"]).toBe(documentedVersion);
     expect(manifest["private"]).toBeUndefined();
     expect(manifest["publishConfig"]).toEqual({ access: "public" });
     expect(manifest["files"]).toContain("CHANGELOG.md");
