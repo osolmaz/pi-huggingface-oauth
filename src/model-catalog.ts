@@ -4,9 +4,11 @@ import type { ProviderConfig, ProviderModelConfig } from "@earendil-works/pi-cod
 import type { FetchLike } from "./types.js";
 
 export const HUGGING_FACE_MODELS_URL = "https://router.huggingface.co/v1/models";
+export const HUGGING_FACE_HUB_MODELS_URL = "https://huggingface.co/api/models";
 export const DEFAULT_MODEL_CATALOG_TIMEOUT_MS = 15_000;
 export const MAX_MODEL_CATALOG_BYTES = 4 * 1024 * 1024;
 const MAX_CATALOG_MODELS = 2_048;
+const HUB_PAGE_SIZE = 1_000;
 const MAX_PROVIDERS_PER_MODEL = 128;
 const MAX_MODEL_ID_LENGTH = 512;
 const MAX_PROVIDER_ID_LENGTH = 64;
@@ -19,13 +21,18 @@ const HUGGING_FACE_PROVIDER = "huggingface";
 const HUGGING_FACE_API = "openai-completions";
 const HUGGING_FACE_BASE_URL = "https://router.huggingface.co/v1";
 
+/**
+ * Providers that serve Hugging Face chat routes, with their display names. A refresh asks the Hub
+ * about each of them that the router listing leaves out entirely.
+ */
 const PROVIDER_NAMES: Readonly<Record<string, string>> = {
+  baseten: "Baseten",
   cerebras: "Cerebras",
+  cohere: "Cohere",
   deepinfra: "DeepInfra",
   "featherless-ai": "Featherless AI",
   "fireworks-ai": "Fireworks",
   groq: "Groq",
-  "hf-inference": "HF Inference",
   novita: "Novita",
   nscale: "Nscale",
   ovhcloud: "OVHcloud",
@@ -40,6 +47,8 @@ export type ModelCatalogOptions = {
   readonly timeoutMs?: number;
   readonly maxResponseBytes?: number;
   readonly localCatalogModifiedAt?: () => Promise<number | undefined>;
+  /** Providers to look up on the Hub when the router listing omits them. Defaults to the named providers. */
+  readonly knownProviders?: readonly string[];
 };
 
 type RouterRoutePricing = {
@@ -61,7 +70,15 @@ type RouterModel = {
 
 export type RouterCatalog = {
   readonly models: readonly RouterModel[];
+  /** Every provider the listing names, including providers whose routes are not eligible. */
+  readonly listedProviders: ReadonlySet<string>;
 };
+
+type BaseRoute = RouterProvider & { readonly baseId: string };
+
+type ProviderParser = (value: unknown) => RouterProvider | undefined;
+
+const EMPTY_CATALOG: RouterCatalog = { models: [], listedProviders: new Set() };
 
 class ModelCatalogTimeoutError extends Error {}
 class ModelCatalogTooLargeError extends Error {}
@@ -105,23 +122,48 @@ function routePricing(source: Readonly<Record<string, unknown>>): RouterRoutePri
   return { inputPrice, outputPrice };
 }
 
+function routeEntry(
+  provider: unknown,
+  contextLength: unknown,
+  pricingSource: Readonly<Record<string, unknown>>,
+): RouterProvider | undefined {
+  const id = providerId(provider);
+  const contextWindow = positiveInteger(contextLength, MAX_CONTEXT_TOKENS);
+  if (id === undefined) return undefined;
+  if (contextWindow === undefined) return undefined;
+  const pricing = routePricing(pricingSource);
+  return pricing === undefined ? { id, contextWindow } : { id, contextWindow, pricing };
+}
+
 function parseProvider(value: unknown): RouterProvider | undefined {
   const source = record(value);
   if (source?.["status"] !== "live") return undefined;
   if (source["supports_tools"] !== true) return undefined;
-  const id = providerId(source["provider"]);
-  const contextWindow = positiveInteger(source["context_length"], MAX_CONTEXT_TOKENS);
-  if (id === undefined) return undefined;
-  if (contextWindow === undefined) return undefined;
-  const pricing = routePricing(source);
-  return pricing === undefined ? { id, contextWindow } : { id, contextWindow, pricing };
+  return routeEntry(source["provider"], source["context_length"], source);
 }
 
-function parseProviders(values: readonly unknown[]): RouterProvider[] {
+function isLiveHubChatRoute(source: Readonly<Record<string, unknown>>): boolean {
+  if (source["status"] !== "live") return false;
+  if (source["task"] !== "conversational") return false;
+  return record(source["features"])?.["toolCalling"] === true;
+}
+
+/**
+ * A Hub provider mapping carries the router listing's eligibility data under other field names:
+ * `features.toolCalling`, `providerDetails.context_length`, and `providerDetails.pricing`.
+ */
+function parseHubProvider(value: unknown): RouterProvider | undefined {
+  const source = record(value);
+  if (source === undefined || !isLiveHubChatRoute(source)) return undefined;
+  const details = record(source["providerDetails"]) ?? {};
+  return routeEntry(source["provider"], details["context_length"], details);
+}
+
+function parseProviders(values: readonly unknown[], parse: ProviderParser): RouterProvider[] {
   const seen = new Set<string>();
   const providers: RouterProvider[] = [];
   for (const value of values) {
-    const provider = parseProvider(value);
+    const provider = parse(value);
     if (provider === undefined || seen.has(provider.id)) continue;
     seen.add(provider.id);
     providers.push(provider);
@@ -129,14 +171,20 @@ function parseProviders(values: readonly unknown[]): RouterProvider[] {
   return providers;
 }
 
-function parseRouterModel(value: unknown): RouterModel {
+function parseModelEntry(value: unknown, field: string, parse: ProviderParser): RouterModel {
   const source = record(value);
   const id = boundedString(source?.["id"], MAX_MODEL_ID_LENGTH);
-  const providers = source?.["providers"];
+  const providers = source?.[field];
   if (id === undefined || !Array.isArray(providers) || providers.length > MAX_PROVIDERS_PER_MODEL) {
     throw new Error("Hugging Face model catalog contains an invalid model entry.");
   }
-  return { id, providers: parseProviders(providers) };
+  return { id, providers: parseProviders(providers, parse) };
+}
+
+function namedProviders(value: unknown): string[] {
+  const providers = record(value)?.["providers"];
+  if (!Array.isArray(providers)) return [];
+  return providers.map((provider) => providerId(record(provider)?.["provider"])).filter((id) => id !== undefined);
 }
 
 export function parseRouterCatalog(value: unknown): RouterCatalog {
@@ -146,13 +194,42 @@ export function parseRouterCatalog(value: unknown): RouterCatalog {
   }
   const seen = new Set<string>();
   const models: RouterModel[] = [];
+  const listedProviders = new Set<string>();
   for (const item of data) {
-    const model = parseRouterModel(item);
+    const model = parseModelEntry(item, "providers", parseProvider);
+    for (const id of namedProviders(item)) listedProviders.add(id);
     if (seen.has(model.id)) continue;
     seen.add(model.id);
     models.push(model);
   }
-  return { models };
+  return { models, listedProviders };
+}
+
+/** The live chat routes that the Hub maps for the given providers, one entry per model and provider. */
+export function parseHubRoutes(value: unknown, providers: ReadonlySet<string>): BaseRoute[] {
+  if (!Array.isArray(value) || value.length > MAX_CATALOG_MODELS) {
+    throw new Error("Hugging Face Hub model list is invalid.");
+  }
+  const routes: BaseRoute[] = [];
+  for (const item of value) {
+    const model = parseModelEntry(item, "inferenceProviderMapping", parseHubProvider);
+    for (const route of model.providers) {
+      if (providers.has(route.id)) routes.push({ ...route, baseId: model.id });
+    }
+  }
+  return routes;
+}
+
+/** Adds routes to a catalog. A route the catalog already has for the same model keeps its catalog entry. */
+function withRoutes(catalog: RouterCatalog, routes: readonly BaseRoute[]): RouterCatalog {
+  const providersById = new Map(catalog.models.map((model) => [model.id, [...model.providers]]));
+  for (const { baseId, ...route } of routes) {
+    const providers = providersById.get(baseId) ?? [];
+    if (!providers.some((existing) => existing.id === route.id)) providers.push(route);
+    providersById.set(baseId, providers);
+  }
+  const models = [...providersById].map(([id, providers]) => ({ id, providers }));
+  return { models, listedProviders: catalog.listedProviders };
 }
 
 function copyCost(cost: Model<Api>["cost"]): Model<Api>["cost"] {
@@ -255,11 +332,6 @@ function splitRouteId(id: string, knownBaseIds: ReadonlySet<string>): { baseId: 
   return routeId === undefined || !knownBaseIds.has(baseId) ? undefined : { baseId, routeId };
 }
 
-type CachedRouteContext = {
-  readonly baseById: ReadonlyMap<string, Model<Api>>;
-  readonly knownBaseIds: ReadonlySet<string>;
-};
-
 function isStoredHuggingFaceRoute(source: Readonly<Record<string, unknown>>): boolean {
   return (
     source["provider"] === HUGGING_FACE_PROVIDER &&
@@ -267,8 +339,6 @@ function isStoredHuggingFaceRoute(source: Readonly<Record<string, unknown>>): bo
     source["baseUrl"] === HUGGING_FACE_BASE_URL
   );
 }
-
-type CachedRouteMetadata = RouterProvider & { readonly baseId: string };
 
 type StoredRouteShape = {
   readonly baseId: string;
@@ -301,7 +371,7 @@ function storedRoutePricing(source: Readonly<Record<string, unknown>>): RouterRo
 function cachedRouteMetadata(
   source: Readonly<Record<string, unknown>>,
   knownBaseIds: ReadonlySet<string>,
-): CachedRouteMetadata | undefined {
+): BaseRoute | undefined {
   const shape = storedRouteShape(source, knownBaseIds);
   if (shape === undefined) return undefined;
   const name = boundedString(source["name"], MAX_ROUTE_NAME_LENGTH);
@@ -312,28 +382,24 @@ function cachedRouteMetadata(
   return pricing === undefined ? undefined : { baseId, id: routeId, contextWindow, pricing };
 }
 
-function restoreCachedRoute(stored: unknown, context: CachedRouteContext): ProviderModelConfig | undefined {
+function restoreCachedRoute(stored: unknown, knownBaseIds: ReadonlySet<string>): BaseRoute | undefined {
   const source = record(stored);
   if (source === undefined) return undefined;
   if (!isStoredHuggingFaceRoute(source)) return undefined;
-  const metadata = cachedRouteMetadata(source, context.knownBaseIds);
-  if (metadata === undefined) return undefined;
-  const base = context.baseById.get(metadata.baseId);
-  return base === undefined ? undefined : routeConfig(base, metadata);
+  return cachedRouteMetadata(source, knownBaseIds);
 }
 
-function cachedRoutes(entry: ModelsStoreEntry | undefined, bases: readonly Model<Api>[]): ProviderModelConfig[] {
+function cachedRoutes(entry: ModelsStoreEntry | undefined, bases: readonly Model<Api>[]): BaseRoute[] {
   if (entry === undefined || !Array.isArray(entry.models)) return [];
-  const context: CachedRouteContext = {
-    baseById: new Map(bases.map((model) => [model.id, model])),
-    knownBaseIds: new Set(bases.map((model) => model.id)),
-  };
+  const knownBaseIds = new Set(bases.map((model) => model.id));
   const seen = new Set<string>();
-  const routes: ProviderModelConfig[] = [];
+  const routes: BaseRoute[] = [];
   for (const stored of entry.models) {
-    const route = restoreCachedRoute(stored, context);
-    if (route === undefined || seen.has(route.id)) continue;
-    seen.add(route.id);
+    const route = restoreCachedRoute(stored, knownBaseIds);
+    if (route === undefined) continue;
+    const key = `${route.baseId}:${route.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     routes.push(route);
   }
   return routes;
@@ -404,11 +470,11 @@ function signalAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true;
 }
 
-function validateCatalogResponse(response: Response, maximumBytes: number): void {
+function validateCatalogResponse(response: Response, url: string, maximumBytes: number): void {
   if (response.status >= 300 && response.status < 400) {
     throw new Error("Hugging Face model catalog returned an unexpected redirect.");
   }
-  if (response.url.length > 0 && new URL(response.url).origin !== new URL(HUGGING_FACE_MODELS_URL).origin) {
+  if (response.url.length > 0 && new URL(response.url).origin !== new URL(url).origin) {
     throw new Error("Hugging Face model catalog redirected to another origin.");
   }
   if (!response.ok)
@@ -416,14 +482,22 @@ function validateCatalogResponse(response: Response, maximumBytes: number): void
   if (oversizedContentLength(response, maximumBytes)) throw new ModelCatalogTooLargeError();
 }
 
-function parseCatalogText(text: string): RouterCatalog {
+function parseCatalogText(text: string): unknown {
   try {
     const value: unknown = JSON.parse(text);
-    return parseRouterCatalog(value);
-  } catch (error) {
-    if (error instanceof SyntaxError) throw new Error("Hugging Face model catalog returned malformed JSON.");
-    throw error;
+    return value;
+  } catch {
+    throw new Error("Hugging Face model catalog returned malformed JSON.");
   }
+}
+
+type CatalogPage = {
+  readonly value: unknown;
+  readonly hasNextPage: boolean;
+};
+
+function hasNextPage(response: Response): boolean {
+  return (response.headers.get("link") ?? "").includes('rel="next"');
 }
 
 function normalizedCatalogError(error: unknown, cause: "none" | "caller" | "timeout"): Error {
@@ -469,7 +543,11 @@ function cancelResponse(response: Response | undefined): void {
   void response?.body?.cancel().catch(() => undefined);
 }
 
-async function fetchCatalog(options: ModelCatalogOptions, signal: AbortSignal | undefined): Promise<RouterCatalog> {
+async function fetchCatalogPage(
+  url: string,
+  options: ModelCatalogOptions,
+  signal: AbortSignal | undefined,
+): Promise<CatalogPage> {
   if (signalAborted(signal)) throw new Error("Hugging Face model catalog refresh was cancelled.");
   const resolved = resolveModelCatalogOptions(options);
   const controller = new AbortController();
@@ -491,16 +569,16 @@ async function fetchCatalog(options: ModelCatalogOptions, signal: AbortSignal | 
   let response: Response | undefined;
   try {
     response = await Promise.race([
-      resolved.fetch(HUGGING_FACE_MODELS_URL, {
+      resolved.fetch(url, {
         headers: { Accept: "application/json" },
         redirect: "manual",
         signal: controller.signal,
       }),
       stopped.promise,
     ]);
-    validateCatalogResponse(response, resolved.maximumBytes);
+    validateCatalogResponse(response, url, resolved.maximumBytes);
     const text = await Promise.race([collectBody(response, resolved.maximumBytes), stopped.promise]);
-    return parseCatalogText(text);
+    return { value: parseCatalogText(text), hasNextPage: hasNextPage(response) };
   } catch (error) {
     throw normalizedCatalogError(error, state.cause);
   } finally {
@@ -508,6 +586,56 @@ async function fetchCatalog(options: ModelCatalogOptions, signal: AbortSignal | 
     stopListening();
     cancelResponse(response);
   }
+}
+
+async function fetchRouterCatalog(
+  options: ModelCatalogOptions,
+  signal: AbortSignal | undefined,
+): Promise<RouterCatalog> {
+  const page = await fetchCatalogPage(HUGGING_FACE_MODELS_URL, options, signal);
+  return parseRouterCatalog(page.value);
+}
+
+function hubModelsUrl(providers: readonly string[]): string {
+  const query = `inference_provider=${providers.join(",")}&expand%5B%5D=inferenceProviderMapping`;
+  return `${HUGGING_FACE_HUB_MODELS_URL}?${query}&limit=${String(HUB_PAGE_SIZE)}`;
+}
+
+/** Known providers and providers with stored routes that the router listing does not name at all. */
+function omittedProviders(
+  catalog: RouterCatalog,
+  knownProviders: readonly string[],
+  stored: readonly BaseRoute[],
+): string[] {
+  const expected = new Set([...knownProviders, ...stored.map((route) => route.id)]);
+  return [...expected].filter((id) => providerId(id) !== undefined && !catalog.listedProviders.has(id)).sort();
+}
+
+/**
+ * The router listing can leave out every route of a provider that the Hub still maps and the router
+ * still serves. One Hub request returns the live chat routes of the omitted providers. When that
+ * request fails or its answer has a further page, the omitted providers keep their stored routes.
+ */
+async function omittedProviderRoutes(
+  omitted: readonly string[],
+  stored: readonly BaseRoute[],
+  options: ModelCatalogOptions,
+  signal: AbortSignal | undefined,
+): Promise<BaseRoute[]> {
+  if (omitted.length === 0) return [];
+  const providers = new Set(omitted);
+  const kept = stored.filter((route) => providers.has(route.id));
+  try {
+    const page = await fetchCatalogPage(hubModelsUrl(omitted), options, signal);
+    return page.hasNextPage ? kept : parseHubRoutes(page.value, providers);
+  } catch (error) {
+    if (signalAborted(signal)) throw error;
+    return kept;
+  }
+}
+
+function providerRoutes(catalog: RouterCatalog, canonical: readonly Model<Api>[]): ProviderModelConfig[] {
+  return deriveProviderModelOptions(catalog, canonical).filter((model) => model.id.includes(":"));
 }
 
 function isStoredHuggingFaceModel(model: Model<Api>): boolean {
@@ -582,21 +710,26 @@ type ModelRefresh = NonNullable<ProviderConfig["refreshModels"]>;
  * refresh that may reach the network fetches the router catalog and derives routes with the running
  * code, so a new release changes the picker without waiting for any cache window to expire. The
  * request carries no validator, because a `304 Not Modified` response would leave the extension
- * with only the previously derived list to show.
+ * with only the previously derived list to show. A provider that the listing omits entirely is
+ * looked up on the Hub, so a gap in the listing does not remove routes that the router still serves.
  */
 export function createHuggingFaceModelRefresh(options: ModelCatalogOptions = {}): ModelRefresh {
   const localCatalogModifiedAt = options.localCatalogModifiedAt ?? defaultLocalCatalogModifiedAt;
+  const knownProviders = options.knownProviders ?? Object.keys(PROVIDER_NAMES);
 
   return async (context): Promise<ProviderModelConfig[]> => {
     const stored = context.stored;
     const canonical = mergeCanonicalModels(stored, await localCatalogModifiedAt());
     const restored = cachedRoutes(stored, canonical);
-    if (!context.allowNetwork || signalAborted(context.signal)) return combineModels(canonical, restored);
+    if (!context.allowNetwork || signalAborted(context.signal)) {
+      return combineModels(canonical, providerRoutes(withRoutes(EMPTY_CATALOG, restored), canonical));
+    }
 
-    const catalog = await fetchCatalog(options, context.signal);
+    const catalog = await fetchRouterCatalog(options, context.signal);
+    const omitted = omittedProviders(catalog, knownProviders, restored);
+    const added = await omittedProviderRoutes(omitted, restored, options, context.signal);
     if (signalAborted(context.signal)) throw new Error("Hugging Face model catalog refresh was cancelled.");
-    const routes = deriveProviderModelOptions(catalog, canonical).filter((model) => model.id.includes(":"));
-    const refreshed = combineModels(canonical, routes);
+    const refreshed = combineModels(canonical, providerRoutes(withRoutes(catalog, added), canonical));
     await writeCombinedCatalog(context, stored, refreshed);
     return refreshed;
   };

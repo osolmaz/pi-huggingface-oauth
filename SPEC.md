@@ -183,6 +183,27 @@ A provider-specific route is eligible only when all of these conditions hold:
 
 Malformed, unavailable, and tool-incompatible provider entries do not enter Pi's picker. Duplicate models and providers keep their first occurrence so ordering remains deterministic.
 
+### Providers that the listing omits
+
+The router listing can leave out every route of a provider while the Hub still maps that provider and the router still serves its routes. A refresh therefore checks two sets of providers against the providers that the listing names in any entry, with any status: the providers in the extension's display-name table, and the providers of the stored routes. When the listing names all of them, the refresh sends no further request. Otherwise it sends one request for the missing providers:
+
+```text
+GET https://huggingface.co/api/models?inference_provider=<providers>&expand%5B%5D=inferenceProviderMapping&limit=1000
+```
+
+`<providers>` is the sorted, comma-separated list of missing provider identifiers. The request uses the same `Accept` header, redirect handling, deadline, cancellation, and response limit as the listing request, and it sends no authorization header.
+
+The response must be a bounded array. Every entry must have a bounded model ID and a bounded `inferenceProviderMapping` array. A mapping entry becomes a route only for a missing provider, and only when all of these conditions hold:
+
+- `status` is `live`;
+- `task` is `conversational`;
+- `features.toolCalling` is `true`; and
+- `providerDetails.context_length` is a positive bounded integer.
+
+The route takes its rates from `providerDetails.pricing` under the same rules as a listed route, so a route without a complete price pair carries the ` (price not published)` label. The Hub answer never adds or changes a route for a provider that the listing names.
+
+When the Hub request fails, returns an invalid body, or announces a further page in its `Link` header, the missing providers keep their stored routes. When the Hub answers in full and no longer maps a stored route as an eligible chat route, that route leaves the picker.
+
 A published price is not an eligibility condition, because the router publishes no price for some live routes. The route uses `pricing.input` and `pricing.output` when both are finite non-negative numbers, or when `is_free` is `true`. A route without a complete price pair keeps its place with zero input and output rates and a display name that ends with ` (price not published)`. Zero rates therefore mean an unknown price, not a free route. The label travels with the stored route, so a cached route restores with the same name and rates.
 
 Each canonical Pi model remains available under its unsuffixed ID and receives an `· Auto` display label. Eligible providers become ordinary model entries with exact Hugging Face suffix IDs, for example:
