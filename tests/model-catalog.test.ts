@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createHuggingFaceProviderConfig } from "../index.js";
 import {
   deriveProviderModelOptions,
+  HUGGING_FACE_HUB_MODELS_URL,
   HUGGING_FACE_MODELS_URL,
   parseRouterCatalog,
   type ModelCatalogOptions,
@@ -30,6 +31,24 @@ function provider(overrides: Readonly<Record<string, unknown>> = {}): Record<str
 function payload(providers: readonly unknown[] = [provider()]): unknown {
   return { object: "list", data: [{ id: GLM_ID, object: "model", providers }] };
 }
+
+function hubRoute(overrides: Readonly<Record<string, unknown>> = {}): Record<string, unknown> {
+  return {
+    provider: "fireworks-ai",
+    providerId: "accounts/fireworks/models/glm-5p2",
+    status: "live",
+    task: "conversational",
+    features: { structuredOutput: true, toolCalling: true },
+    providerDetails: { context_length: 202_752 },
+    ...overrides,
+  };
+}
+
+function hubModel(id: string, mapping: readonly unknown[]): unknown {
+  return { _id: "hub-model", id, inferenceProviderMapping: mapping };
+}
+
+const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
 function jsonResponse(value: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(value), {
@@ -79,11 +98,20 @@ function requestUrl(input: string | URL | Request | undefined): string | undefin
   return input?.url;
 }
 
+function isHubRequest(input: string | URL | Request): boolean {
+  return requestUrl(input)?.startsWith(HUGGING_FACE_HUB_MODELS_URL) === true;
+}
+
+/** Answers router requests with the listing and Hub requests with the given response. */
+function catalogFetch(listing: unknown, hub: () => Response = () => jsonResponse([])): FetchLike {
+  return async (input) => (isHubRequest(input) ? hub() : jsonResponse(listing));
+}
+
 function catalogRefresh(options: ModelCatalogOptions) {
   const config = createHuggingFaceProviderConfig({
     clientId: "test-client",
     env: {},
-    modelCatalog: { localCatalogModifiedAt: async () => 0, ...options },
+    modelCatalog: { localCatalogModifiedAt: async () => 0, knownProviders: [], ...options },
   });
   return (context: RefreshModelsContext) => {
     if (config.refreshModels === undefined) throw new Error("Expected a refreshable provider");
@@ -158,6 +186,7 @@ describe("Hugging Face router catalog", () => {
     });
 
     expect(catalog.models).toHaveLength(1);
+    expect(catalog.listedProviders).toEqual(new Set(["novita", "ignored"]));
     expect(catalog.models[0]?.providers).toEqual([
       { id: "novita", contextWindow: 1_048_576, pricing: { inputPrice: 1.4, outputPrice: 4.4 } },
     ]);
@@ -202,7 +231,7 @@ describe("Hugging Face model refresh", () => {
     const config = createHuggingFaceProviderConfig({
       clientId: "test-client",
       env: {},
-      modelCatalog: { fetch: async () => jsonResponse(payload()) },
+      modelCatalog: { fetch: catalogFetch(payload()) },
     });
     if (config.refreshModels === undefined) throw new Error("Expected a refreshable provider");
 
@@ -251,7 +280,7 @@ describe("Hugging Face model refresh", () => {
     const store = new MemoryStore();
     const first = catalogRefresh({ fetch: async () => jsonResponse(payload()) });
     await refreshProvider(first, refreshContext(store));
-    const secondFetch = vi.fn<FetchLike>(async () => jsonResponse(payload([provider({ provider: "fireworks-ai" })])));
+    const secondFetch = vi.fn<FetchLike>(catalogFetch(payload([provider(), provider({ provider: "fireworks-ai" })])));
     const second = catalogRefresh({ fetch: secondFetch });
 
     const models = await refreshProvider(second, refreshContext(store));
@@ -277,20 +306,6 @@ describe("Hugging Face model refresh", () => {
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     });
     expect(store.entry?.models.some((model) => model.id === `${GLM_ID}:fireworks-ai`)).toBe(true);
-  });
-
-  it("replaces stored routes with the routes the router publishes", async () => {
-    const store = new MemoryStore();
-    const first = catalogRefresh({
-      fetch: async () => jsonResponse(payload([provider(), provider({ provider: "fireworks-ai" })])),
-    });
-    await refreshProvider(first, refreshContext(store));
-    const second = catalogRefresh({ fetch: async () => jsonResponse(payload()) });
-
-    const models = await refreshProvider(second, refreshContext(store));
-
-    expect(route(models, `${GLM_ID}:fireworks-ai`)).toBeUndefined();
-    expect(route(models, `${GLM_ID}:novita`)).toBeDefined();
   });
 
   it("keeps the last stored catalog when a refresh fails", async () => {
@@ -449,6 +464,202 @@ describe("Hugging Face model refresh", () => {
     );
     await started;
     during.abort();
+    await expect(request).rejects.toThrow(/cancelled/u);
+  });
+});
+
+describe("Routes of providers that the router listing omits", () => {
+  it("looks up every named provider that the router listing omits by default", async () => {
+    const urls: (string | undefined)[] = [];
+    const listing = catalogFetch(payload());
+    const fetch: FetchLike = async (input, init) => {
+      urls.push(requestUrl(input));
+      return listing(input, init);
+    };
+    const config = createHuggingFaceProviderConfig({ clientId: "test-client", env: {}, modelCatalog: { fetch } });
+    if (config.refreshModels === undefined) throw new Error("Expected a refreshable provider");
+
+    await config.refreshModels(refreshContext(new MemoryStore()));
+
+    const providers = [
+      "baseten",
+      "cerebras",
+      "cohere",
+      "deepinfra",
+      "featherless-ai",
+      "fireworks-ai",
+      "groq",
+      "nscale",
+      "ovhcloud",
+      "publicai",
+      "scaleway",
+      "together",
+      "zai-org",
+    ];
+    expect(urls).toEqual([
+      HUGGING_FACE_MODELS_URL,
+      `${HUGGING_FACE_HUB_MODELS_URL}?inference_provider=${providers.join(",")}&expand%5B%5D=inferenceProviderMapping&limit=1000`,
+    ]);
+  });
+
+  it("drops a stored route that neither the router listing nor the Hub publishes", async () => {
+    const store = new MemoryStore();
+    const first = catalogRefresh({
+      fetch: catalogFetch(payload([provider(), provider({ provider: "fireworks-ai" })])),
+    });
+    await refreshProvider(first, refreshContext(store));
+    const fetch = vi.fn<FetchLike>(catalogFetch(payload(), () => jsonResponse([hubModel(GLM_ID, [])])));
+
+    const models = await refreshProvider(catalogRefresh({ fetch }), refreshContext(store));
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(route(models, `${GLM_ID}:fireworks-ai`)).toBeUndefined();
+    expect(route(models, `${GLM_ID}:novita`)).toBeDefined();
+    expect(store.entry?.models.some((model) => model.id === `${GLM_ID}:fireworks-ai`)).toBe(false);
+  });
+
+  it("drops a route that the listing still names but no longer qualifies, without asking the Hub", async () => {
+    const store = new MemoryStore();
+    const first = catalogRefresh({
+      fetch: catalogFetch(payload([provider(), provider({ provider: "fireworks-ai" })])),
+    });
+    await refreshProvider(first, refreshContext(store));
+    const fetch = vi.fn<FetchLike>(
+      catalogFetch(payload([provider(), provider({ provider: "fireworks-ai", supports_tools: false })])),
+    );
+
+    const models = await refreshProvider(catalogRefresh({ fetch }), refreshContext(store));
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(route(models, `${GLM_ID}:fireworks-ai`)).toBeUndefined();
+  });
+
+  it("adds live chat routes from the Hub for known providers that the listing omits", async () => {
+    const requests: { input: string | URL | Request; init: RequestInit | undefined }[] = [];
+    const hub = [
+      hubModel(GLM_ID, [
+        hubRoute(),
+        hubRoute({
+          provider: "together",
+          providerDetails: { context_length: 131_072, pricing: { input: 0.5, output: 1.5 } },
+        }),
+        hubRoute({ provider: "novita", providerDetails: { context_length: 1, pricing: { input: 9, output: 9 } } }),
+      ]),
+      hubModel("other/model", [hubRoute()]),
+    ];
+    const listing = catalogFetch(payload(), () => jsonResponse(hub));
+    const fetch: FetchLike = async (input, init) => {
+      requests.push({ input, init });
+      return listing(input, init);
+    };
+    const store = new MemoryStore();
+    const refreshModels = catalogRefresh({ fetch, knownProviders: ["novita", "together", "fireworks-ai"] });
+
+    const models = await refreshProvider(refreshModels, refreshContext(store));
+
+    expect(requests.map((request) => requestUrl(request.input))).toEqual([
+      HUGGING_FACE_MODELS_URL,
+      `${HUGGING_FACE_HUB_MODELS_URL}?inference_provider=fireworks-ai,together&expand%5B%5D=inferenceProviderMapping&limit=1000`,
+    ]);
+    expect(new Headers(requests[1]?.init?.headers).get("authorization")).toBeNull();
+    expect(requests[1]?.init?.redirect).toBe("manual");
+    expect(models.filter((model) => model.id.startsWith(`${GLM_ID}:`)).map((model) => model.id)).toEqual([
+      `${GLM_ID}:novita`,
+      `${GLM_ID}:fireworks-ai`,
+      `${GLM_ID}:together`,
+    ]);
+    expect(route(models, `${GLM_ID}:novita`)?.contextWindow).toBe(1_048_576);
+    expect(route(models, `${GLM_ID}:fireworks-ai`)).toMatchObject({
+      name: "GLM-5.2 · Fireworks (price not published)",
+      contextWindow: 202_752,
+      cost: ZERO_COST,
+    });
+    expect(route(models, `${GLM_ID}:together`)).toMatchObject({
+      name: "GLM-5.2 · Together",
+      contextWindow: 131_072,
+      cost: { input: 0.5, output: 1.5, cacheRead: 0, cacheWrite: 0 },
+    });
+    expect(models.some((model) => model.id.startsWith("other/model"))).toBe(false);
+    expect(store.entry?.models.some((model) => model.id === `${GLM_ID}:fireworks-ai`)).toBe(true);
+  });
+
+  it("applies the router eligibility rules to Hub routes", async () => {
+    const hub = [
+      hubModel(GLM_ID, [
+        hubRoute({ status: "staging" }),
+        hubRoute({ provider: "together", task: "text-to-image" }),
+        hubRoute({ provider: "groq", features: { toolCalling: false } }),
+        hubRoute({ provider: "cerebras", features: null }),
+        hubRoute({ provider: "baseten", providerDetails: null }),
+        hubRoute({ provider: "scaleway", providerDetails: { pricing: { input: 1, output: 2 } } }),
+      ]),
+    ];
+    const knownProviders = ["fireworks-ai", "together", "groq", "cerebras", "baseten", "scaleway"];
+    const refreshModels = catalogRefresh({ fetch: catalogFetch(payload(), () => jsonResponse(hub)), knownProviders });
+
+    const models = await refreshProvider(refreshModels, refreshContext(new MemoryStore()));
+
+    expect(models.filter((model) => model.id.startsWith(`${GLM_ID}:`)).map((model) => model.id)).toEqual([
+      `${GLM_ID}:novita`,
+    ]);
+  });
+
+  it("makes no Hub request when the listing names every known provider", async () => {
+    const fetch = vi.fn<FetchLike>(catalogFetch(payload()));
+
+    await refreshProvider(catalogRefresh({ fetch, knownProviders: ["novita"] }), refreshContext(new MemoryStore()));
+
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the stored routes of an omitted provider when the Hub gives no complete answer", async () => {
+    const seeded = new MemoryStore();
+    const first = catalogRefresh({
+      fetch: catalogFetch(payload([provider(), provider({ provider: "fireworks-ai", pricing: undefined })])),
+    });
+    await refreshProvider(first, refreshContext(seeded));
+    const answers: (() => Response)[] = [
+      () => new Response(null, { status: 503 }),
+      () => new Response("not-json"),
+      () => jsonResponse({}),
+      () => jsonResponse([{ id: GLM_ID }]),
+      () =>
+        jsonResponse([hubModel(GLM_ID, [])], {
+          headers: { link: '<https://huggingface.co/api/models?cursor=x>; rel="next"' },
+        }),
+    ];
+    for (const answer of answers) {
+      const store = new MemoryStore(structuredClone(seeded.entry));
+      const refreshModels = catalogRefresh({ fetch: catalogFetch(payload(), answer) });
+
+      const models = await refreshProvider(refreshModels, refreshContext(store));
+
+      expect(route(models, `${GLM_ID}:fireworks-ai`)).toMatchObject({
+        name: "GLM-5.2 · Fireworks (price not published)",
+        contextWindow: 1_048_576,
+        cost: ZERO_COST,
+      });
+      expect(route(models, `${GLM_ID}:novita`)).toBeDefined();
+    }
+  });
+
+  it("honors cancellation during the Hub request", async () => {
+    const controller = new AbortController();
+    let markStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const fetch = catalogFetch(payload(), () => {
+      markStarted();
+      return new Response(new ReadableStream<Uint8Array>({ start: () => undefined }));
+    });
+    const request = refreshProvider(
+      catalogRefresh({ fetch, knownProviders: ["fireworks-ai"], timeoutMs: 1_000 }),
+      refreshContext(new MemoryStore(), { signal: controller.signal }),
+    );
+    await started;
+    controller.abort();
+
     await expect(request).rejects.toThrow(/cancelled/u);
   });
 });

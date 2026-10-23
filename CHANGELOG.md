@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0
+
+- Look up a provider on the Hub when the router listing leaves it out entirely, so a gap in the listing no longer removes routes that the router still serves. The listing left out every Fireworks and Together route on 2026-10-23.
+- Apply the listing's route rules to Hub routes: live status, chat task, tool calling, and a published context length.
+- Keep the stored routes of an omitted provider when the Hub request fails or its answer has a further page.
+- Name Baseten and Cohere in the provider table, and remove HF Inference, which serves no chat routes.
+
 ## 0.4.0
 
 - Fetch the router catalog on every refresh that may reach the network, so a new release changes the picker on the next refresh instead of waiting for a cache window to expire.

@@ -54,6 +54,8 @@ The OAuth application is public and uses no client secret. Device codes and OAut
 
 Model discovery uses Hugging Face's public `https://router.huggingface.co/v1/models` endpoint and sends no authorization header. The extension validates the response and its redirect behavior before checking body limits, deadlines, and model fields.
 
+That listing sometimes leaves out every route of a provider that the router still serves. When a known provider, or a provider with stored routes, is missing from the listing, the extension asks the public Hub model API about that provider in one more request and applies the same route rules. If the Hub gives no complete answer, the provider keeps its stored routes.
+
 See [SECURITY.md](SECURITY.md) for reporting instructions and the package's security boundaries.
 
 ## License
